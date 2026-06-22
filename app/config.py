@@ -73,3 +73,10 @@ PORT: int = _int("PORT", 8000)
 
 # ---- 百炼 WS 端点（北京）----
 DASHSCOPE_WS_URL: str = _get("DASHSCOPE_WS_URL", "wss://dashscope.aliyuncs.com/api-ws/v1/inference")
+
+# ---- 视觉 / tool-calling ----
+ENABLE_VISION: bool = _bool("ENABLE_VISION", True)
+PHOTO_MAX_SIZE: int = _int("PHOTO_MAX_SIZE", 640)
+PHOTO_QUALITY: float = _float("PHOTO_QUALITY", 0.8)
+TAKE_PHOTO_TIMEOUT: int = _int("TAKE_PHOTO_TIMEOUT", 5)
+MAX_TOOL_CALLS_PER_TURN: int = _int("MAX_TOOL_CALLS_PER_TURN", 3)
