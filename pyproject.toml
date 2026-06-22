@@ -10,6 +10,7 @@ dependencies = [
     "dashscope>=1.25.11",
     "openai>=1.40",
     "python-dotenv>=1.0",
+    "websockets<14",
 ]
 
 [project.scripts]

@@ -286,6 +286,48 @@ function stopMic() {
 }
 
 // ---- 会话 ----
+// 把启动阶段的异常翻译成「标题 + 处置建议」，避免裸露的 Permission denied 之类原文
+function describeStartError(e) {
+  const name = (e && e.name) || "";
+  const msg = (e && e.message) || String(e);
+  // 麦克风权限被拒（用户阻止 / 地址栏禁止）
+  if (name === "NotAllowedError" || /permission/i.test(msg)) {
+    return {
+      title: "麦克风权限被拒绝",
+      hint: "点地址栏左侧锁图标 → 麦克风 → 允许，刷新页面后重试",
+    };
+  }
+  // 非安全上下文 / 浏览器不支持：getUserMedia 仅在 localhost 或 https 可用
+  if (name === "SecurityError" || !window.isSecureContext || !navigator.mediaDevices) {
+    return {
+      title: "无法访问麦克风（来源不安全或浏览器不支持）",
+      hint: "请用 Chrome/Edge/Firefox 新版打开 http://127.0.0.1:8000，勿用局域网 IP 或 file://",
+    };
+  }
+  // 无麦克风设备
+  if (name === "NotFoundError") {
+    return {
+      title: "未检测到麦克风",
+      hint: "请确认麦克风已连接并在系统声音设置中启用",
+    };
+  }
+  // 设备被其他程序占用
+  if (name === "NotReadableError") {
+    return {
+      title: "麦克风被占用",
+      hint: "关闭其他正在使用麦克风的程序（会议/录音等）后重试",
+    };
+  }
+  // WebSocket 未连上 → 后端没起
+  if (/连接失败|ws 未创建/i.test(msg)) {
+    return {
+      title: "无法连接后端服务",
+      hint: "请确认后端已启动（默认监听 127.0.0.1:8000）",
+    };
+  }
+  return { title: "启动失败：" + msg, hint: "请检查浏览器麦克风权限与后端服务" };
+}
+
 async function startSession() {
   btnStart.disabled = true;
   setHint("");
@@ -303,8 +345,9 @@ async function startSession() {
     await startMic();
     btnStop.disabled = false;
   } catch (e) {
-    addError("启动失败：" + (e && e.message ? e.message : e));
-    setHint("请检查麦克风权限或后端是否已启动");
+    const info = describeStartError(e);
+    addError(info.title);
+    setHint(info.hint);
     btnStart.disabled = false;
     try { if (ws) ws.close(); } catch (er) {}
   }
