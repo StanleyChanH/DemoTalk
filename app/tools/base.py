@@ -24,3 +24,25 @@ class ToolResult:
         if not content:
             content.append({"type": "text", "text": ""})
         return content
+
+
+@dataclass
+class ToolContext:
+    """工具执行上下文。request_photo 由 session 注入（返回 data URL 或 None）。"""
+
+    call_id: str
+    args: dict
+    request_photo: Callable[[str], Awaitable[str | None]]
+
+
+@runtime_checkable
+class Tool(Protocol):
+    """工具协议：声明 schema，execute 执行并返回 ToolResult。"""
+
+    @property
+    def schema(self) -> dict:
+        """OpenAI function schema: {name, description, parameters}。"""
+        ...
+
+    async def execute(self, ctx: ToolContext) -> ToolResult:
+        ...

@@ -16,3 +16,29 @@ def test_image_result():
 def test_empty_result():
     r = ToolResult()
     assert r.to_message_content() == [{"type": "text", "text": ""}]
+
+
+import inspect
+from app.tools.base import Tool, ToolContext
+
+
+def test_tool_protocol_is_protocol():
+    # Tool 是 Protocol，可被任意含 schema/execute 的对象满足
+    class Echo:
+        @property
+        def schema(self) -> dict:
+            return {"name": "echo", "description": "d", "parameters": {"type": "object", "properties": {}}}
+
+        async def execute(self, ctx: ToolContext) -> "ToolResult":
+            from app.tools.base import ToolResult
+            return ToolResult(text="ok")
+
+    e = Echo()
+    assert isinstance(e, Tool)  # runtime_checkable 协议校验
+
+
+def test_tool_context_fields():
+    ctx = ToolContext(call_id="c1", args={}, request_photo=lambda cid: None)
+    assert ctx.call_id == "c1"
+    assert ctx.args == {}
+    assert callable(ctx.request_photo)
