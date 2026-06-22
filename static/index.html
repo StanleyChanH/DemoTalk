@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>DemoTalk · 实时语音助手</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <h1>DemoTalk</h1>
+        <span class="sub">实时低延迟语音助手 · 百炼 STT / LLM / TTS</span>
+      </div>
+      <div class="status">
+        <span id="connPill" class="pill pill-muted">未连接</span>
+        <span id="statePill" class="pill">待机</span>
+      </div>
+    </header>
+
+    <main id="transcript" class="transcript">
+      <div class="hint" id="welcome">
+        点击「开始对话」，允许麦克风权限后即可开口交谈。<br />
+        助手会实时转写你的话、流式生成回答（打字机效果）并语音播报。
+      </div>
+    </main>
+
+    <div id="partial" class="partial" aria-live="polite"></div>
+
+    <footer class="controls">
+      <button id="btnStart" class="btn btn-primary">开始对话</button>
+      <button id="btnStop" class="btn btn-ghost" disabled>结束对话</button>
+      <span id="hint" class="hint-small"></span>
+    </footer>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
