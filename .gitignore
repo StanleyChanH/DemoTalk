@@ -27,4 +27,6 @@ Thumbs.db
 .omc/
 
 # Docs
-docs/
+docs/*
+!docs/superpowers/
+!docs/superpowers/**
