@@ -1,28 +1,34 @@
-# DemoTalk · 实时低延迟语音助手
+# DemoTalk · 实时低延迟语音助手（带视觉）
 
-基于 Python 的实时语音对话助手，三件套模型服务全部来自**阿里云百炼（DashScope）**：
+基于 Python 的实时语音对话助手，模型服务全部来自**阿里云百炼（DashScope）**：
 
 | 能力 | 模型 | 接入 |
 |---|---|---|
 | 语音识别 (STT) | `fun-asr-realtime` | dashscope SDK，全双工 WebSocket |
 | 大模型 (LLM) | `qwen3.7-plus` | OpenAI 兼容接口，SSE 流式（关闭思考） |
 | 语音合成 (TTS) | `cosyvoice-v3-flash` | dashscope SDK，WebSocket 流式回调 |
+| 视觉（多模态） | `qwen3.7-plus` | LLM 主动调用 `take_photo` 工具 → 前端拍照 → 多模态回传 |
 
-- 浏览器前端：打字机流式对话输出、开始/结束对话按钮、调用本机麦克风与扬声器。
+- 浏览器前端：打字机流式对话输出、开始/结束对话按钮、调用本机麦克风、扬声器与摄像头。
 - 低延迟：STT 实时转写、LLM 流式产出、按句即时喂给 TTS、PCM 直传播放（首包约 350ms）。
+- 视觉：对话需要"看"时（如「这是什么」「前面有什么」），LLM 主动调 `take_photo` 拍照，基于画面回答（qwen3.7-plus 多模态）。
 - 支持打断（barge-in）：助手说话时你开口，立即停止播报并进入新一轮。
 - 工具链：`uv` 管理环境与依赖。
 
 ## 架构
 
 ```
-浏览器麦克风(16kHz/16bit PCM)
-   │  WebSocket binary
+浏览器麦克风(16kHz/16bit PCM) + 摄像头预览
+   │  WebSocket binary（PCM） / 文本事件
    ▼
 FastAPI ──► STT(fun-asr-realtime, SDK线程)  ──partial──► 实时字幕
    │                                          └─final─► LLM(qwen3.7-plus, enable_thinking=False)
-   │                                                       └─delta─► 打字机文本 + 按句喂 TTS
-   │                                                                    └─PCM─► 浏览器播放
+   │                                                       ├─delta─► 打字机文本 + 按句喂 TTS
+   │                                                       │                └─PCM─► 浏览器播放
+   │                                                       └─tool_calls(take_photo)─► WS 下发 take_photo
+   │                                                                                      └─前端抓帧 → photo 回传
+   │                                                                                      └─多模态 tool 结果回 LLM
+   │                                                                                           └─delta─► 打字机 + TTS
    └─ barge-in：句末到达且当前在播报 → 取消 TTS + 停止播放
 ```
 
@@ -33,7 +39,7 @@ FastAPI ──► STT(fun-asr-realtime, SDK线程)  ──partial──► 实�
 - **uv**（[安装](https://docs.astral.sh/uv/)）：本机已自带则忽略。
 - **Python 3.10–3.13**：uv 会按 `.python-version` 自动下载 3.12。
 - **百炼 API Key**：在 [百炼控制台](https://bailian.console.aliyun.com/?tab=model#/api-key) 获取（本项目默认走**北京**地域）。
-- 浏览器需支持 `AudioWorklet`（Chrome / Edge / Firefox 新版均可）；首次需允许麦克风权限。
+- 浏览器需支持 `AudioWorklet`（Chrome / Edge / Firefox 新版均可）；首次需允许**麦克风与摄像头**权限（视觉功能需要摄像头）。
 
 ## 快速开始
 
@@ -54,7 +60,7 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 > 自检（无头往返，用 TTS 合成的语音喂回 STT 验证全链路）：先按上面启动服务，另开终端 `uv run python scripts/selftest.py`，看到 `===== 全部自检通过 =====` 即代表 STT→LLM→TTS 真实打通。
 
-浏览器打开 <http://127.0.0.1:8000>，点「**开始对话**」，允许麦克风后即可开口交谈。
+浏览器打开 <http://127.0.0.1:8000>，点「**开始对话**」，允许**麦克风与摄像头**后即可开口交谈；问「我前面这是什么」可触发视觉拍照。
 
 ## 配置项（.env）
 
@@ -91,10 +97,14 @@ DemoTalk/
 ├── app/
 │   ├── main.py             # FastAPI：静态前端 + WebSocket
 │   ├── config.py           # 环境变量配置
-│   ├── session.py          # 会话编排：状态机 + 三服务联动 + barge-in
+│   ├── session.py          # 会话编排：状态机 + 三服务联动 + barge-in + tool 循环
 │   ├── stt.py              # fun-asr-realtime 封装
-│   ├── llm.py              # qwen3.7-plus 流式封装
-│   └── tts.py              # cosyvoice 流式封装
+│   ├── llm.py              # qwen3.7-plus 流式（astream_once + tool_calls 检测）
+│   ├── tts.py              # cosyvoice 流式封装
+│   └── tools/              # 通用 tool 框架（视觉 take_photo；将来 MCP/Skills 复用）
+│       ├── base.py         # ToolResult / ToolContext / Tool 协议
+│       ├── registry.py     # ToolRegistry 注册表
+│       └── builtin/take_photo.py
 └── static/
     ├── index.html          # 界面
     ├── style.css           # 样式
