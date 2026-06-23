@@ -83,9 +83,15 @@ async def ws_endpoint(ws: WebSocket):
                     obj = json.loads(data_text)
                 except json.JSONDecodeError:
                     continue
-                if obj.get("type") == "stop":
+                t = obj.get("type")
+                if t == "stop":
                     break
-                await session.handle_control(obj)
+                elif t == "photo":
+                    await session.handle_photo(obj.get("call_id", ""), obj.get("data"))
+                elif t == "photo_error":
+                    await session.handle_photo_error(obj.get("call_id", ""))
+                else:
+                    await session.handle_control(obj)
     except WebSocketDisconnect:
         log.info("客户端断开")
     except Exception:

@@ -108,3 +108,11 @@ async def test_barge_in_during_photo_keeps_history_consistent(monkeypatch):
     assert history[idx + 1]["tool_call_id"] == "call_x"
     # history 不能以孤立的 assistant(tool_calls) 结尾
     assert history[-1]["role"] != "assistant" or not history[-1].get("tool_calls")
+
+
+async def test_handle_photo_resolves_pending():
+    s = _make_session()
+    fut = s.loop.create_future()
+    s._pending_photos["c9"] = fut
+    await s.handle_photo("c9", "data:image/jpeg;base64,Z")
+    assert fut.result() == "data:image/jpeg;base64,Z"
