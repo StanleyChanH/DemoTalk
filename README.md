@@ -81,6 +81,8 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `PHOTO_QUALITY` | `0.8` | JPEG 质量 |
 | `TAKE_PHOTO_TIMEOUT` | `5` | 拍照超时(秒) |
 | `MAX_TOOL_CALLS_PER_TURN` | `3` | 每轮工具调用上限 |
+| `ENABLE_MCP` | `true` | 是否启用 MCP（外部工具服务器） |
+| `MCP_CONFIG_FILE` | `mcp.json` | MCP 配置文件路径（mcpServers 格式） |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | 服务监听 |
 
 ### 关于 TTS 模型（重要）
@@ -93,6 +95,7 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 DemoTalk/
 ├── pyproject.toml          # uv 依赖与入口
+├── mcp.json                # MCP server 配置（mcpServers 格式）
 ├── .env.example            # 配置模板
 ├── app/
 │   ├── main.py             # FastAPI：静态前端 + WebSocket
@@ -101,10 +104,15 @@ DemoTalk/
 │   ├── stt.py              # fun-asr-realtime 封装
 │   ├── llm.py              # qwen3.7-plus 流式（astream_once + tool_calls 检测）
 │   ├── tts.py              # cosyvoice 流式封装
-│   └── tools/              # 通用 tool 框架（视觉 take_photo；将来 MCP/Skills 复用）
-│       ├── base.py         # ToolResult / ToolContext / Tool 协议
-│       ├── registry.py     # ToolRegistry 注册表
-│       └── builtin/take_photo.py
+│   ├── tools/              # 通用 tool 框架（视觉 take_photo；将来 MCP/Skills 复用）
+│   │   ├── base.py         # ToolResult / ToolContext / Tool 协议
+│   │   ├── registry.py     # ToolRegistry 注册表
+│   │   └── builtin/take_photo.py
+│   └── mcp/                # MCP client（config/client/adapter/manager）
+│       ├── config.py       # 读 mcp.json
+│       ├── client.py       # McpClient SSE/stdio
+│       ├── adapter.py      # McpToolAdapter → Tool
+│       └── manager.py      # McpManager 进程级加载
 └── static/
     ├── index.html          # 界面
     ├── style.css           # 样式
@@ -124,6 +132,23 @@ DemoTalk/
 每轮对话最多调用 3 次工具（`MAX_TOOL_CALLS_PER_TURN`），防止循环。
 
 > 手动验证视觉：启动服务后浏览器打开页面，授权麦克风+摄像头，对镜头展示一个物体并问「我前面这个东西是什么」，应看到"正在拍照…"提示、画面闪光、随后助手基于画面回答并语音播报。
+
+## MCP 接入（外部工具）
+
+DemoTalk 可作为 MCP client 连接外部 MCP server，把 server 的工具暴露给 LLM。MCP 工具与视觉 `take_photo` 共存，复用同一 tool-calling 循环。
+
+配置文件 `mcp.json`（项目根，标准 `mcpServers` 格式），支持 SSE 与 stdio：
+
+```json
+{
+  "mcpServers": {
+    "howtocook-mcp": { "type": "sse", "url": "https://..." },
+    "some-local":    { "type": "stdio", "command": "npx", "args": ["-y", "x"], "env": {} }
+  }
+}
+```
+
+启动时进程级加载所有 server（`McpManager.load_all`），连接失败的 server 跳过（不影响其他与主服务）。`ENABLE_MCP=false` 可关闭。
 
 ## 常见问题
 
