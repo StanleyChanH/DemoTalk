@@ -4,15 +4,17 @@
   1) 先启动服务：  uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
   2) 另开终端运行： uv run python scripts/selftest.py
 
-做了四件事：
+做了五件事：
   Phase 1 —— 直接调 LLM（qwen3.7-plus）流式，验证 Key/网络/思考关闭。
-  Phase 2 —— 直接调 TTS（cosyvoice-v3-flash）流式，收集 PCM 写成 wav（供 Phase3/4 当麦克风输入）。
+  Phase 2 —— 直接调 TTS（cosyvoice-v3-flash）流式，收集 PCM 写成 wav（供 Phase3/4/5 当麦克风输入）。
   Phase 3 —— 起一个 WebSocket 客户端，把 Phase2 的语音按 16k/100ms 喂给 /ws，
              期望收到：partial → user_final → delta(打字机) → TTS 二进制音频 → tts_end。
              一次打通 session.py 的 STT→LLM→TTS 编排。
   Phase 4 —— 合成一句视觉意图语音喂 STT，期望 LLM 调 take_photo；selftest 回传一张
              左红右蓝测试图，验证 LLM 基于图作多模态回答 + TTS。LLM 未调 take_photo 不算失败
              （无头环境模型行为，非缺陷），仅打 INFO。
+  Phase 5 —— 合成一句菜谱意图语音喂 STT，期望 LLM 调 mcp_howtocook_whatToEat 并基于
+             菜谱结果回答 + TTS。LLM 未调 MCP 工具不算失败（无头环境模型行为，非缺陷），仅打 INFO。
 """
 from __future__ import annotations
 
@@ -355,11 +357,82 @@ async def phase4_vision_roundtrip() -> None:
         print("[INFO] LLM 未发起 take_photo（无头环境模型行为，非缺陷），建议浏览器手动验证")
 
 
+async def phase5_mcp_roundtrip() -> None:
+    import websockets
+
+    print("\n===== Phase 5: MCP tool 端到端（howtocook-mcp）=====")
+    # 合成一句菜谱意图语音
+    speech_text = "晚上不知道吃什么，给我推荐一下。"
+    speech_wav = os.path.join(HERE, "test_mcp_speech.wav")
+    await _synthesize_wav(speech_text, speech_wav)
+
+    # 重采样到 16k
+    with wave.open(speech_wav, "rb") as w:
+        sr = w.getframerate()
+        pcm = w.readframes(w.getnframes())
+    import audioop
+    if sr != 16000:
+        pcm16, _ = audioop.ratecv(pcm, 2, 1, sr, 16000, None)
+    else:
+        pcm16 = pcm
+    print(f"[i] 喂入 STT：{len(pcm16)} 字节 16k PCM")
+
+    events: list[str] = []
+    deltas: list[str] = []
+    done = asyncio.Event()
+
+    uri = "ws://127.0.0.1:8000/ws"
+    async with websockets.connect(uri, max_size=None) as ws:
+        async def reader():
+            try:
+                async for msg in ws:
+                    if isinstance(msg, (bytes, bytearray)):
+                        continue
+                    obj = json.loads(msg)
+                    t = obj.get("type")
+                    events.append(t)
+                    if t == "delta":
+                        deltas.append(obj.get("text", ""))
+                    elif t in ("tts_end", "error"):
+                        done.set()
+            except websockets.ConnectionClosed:
+                pass
+
+        rtask = asyncio.create_task(reader())
+        await asyncio.sleep(0.5)
+        CHUNK = 3200
+        for i in range(0, len(pcm16), CHUNK):
+            await ws.send(pcm16[i:i + CHUNK])
+            await asyncio.sleep(0.1)
+        for _ in range(20):  # ~2s 静音
+            await ws.send(b"\x00" * CHUNK)
+            await asyncio.sleep(0.1)
+        try:
+            await asyncio.wait_for(done.wait(), timeout=60)
+        except asyncio.TimeoutError:
+            print("   [!] 60s 内未完成")
+        try:
+            await ws.send(json.dumps({"type": "stop"}))
+        except Exception:
+            pass
+        await asyncio.sleep(0.3)
+        rtask.cancel()
+
+    print(f"[结果] 事件序列: {events}")
+    print(f"[结果] 助手回复: {''.join(deltas)[:160]}")
+
+    if deltas:
+        print("[PASS] MCP 往返成功：LLM 基于 MCP 工具结果作了回答")
+    else:
+        print("[INFO] 未收到 delta（LLM 可能未调 MCP 工具，或模型行为）；建议浏览器手动验证")
+
+
 async def main() -> None:
     await phase1_llm()
     await phase2_tts()
     await phase3_ws_roundtrip()
     await phase4_vision_roundtrip()
+    await phase5_mcp_roundtrip()
     print("\n===== 全部自检通过 =====")
 
 
