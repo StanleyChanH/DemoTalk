@@ -11,7 +11,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from contextlib import asynccontextmanager
+
 from . import config
+from .mcp.config import load_mcp_config as _load_mcp_config
+from .mcp.manager import mcp_manager
 from .session import Session
 
 logging.basicConfig(
@@ -23,7 +27,16 @@ log = logging.getLogger("demotalk")
 BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
 STATIC_DIR = BASE_DIR / "static"
 
-app = FastAPI(title="DemoTalk", version="0.1.0")
+@asynccontextmanager
+async def lifespan(app):
+    if config.ENABLE_MCP:
+        servers = _load_mcp_config(config.MCP_CONFIG_FILE)
+        await mcp_manager.load_all(servers)
+    yield
+    await mcp_manager.close_all()
+
+
+app = FastAPI(title="DemoTalk", version="0.1.0", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
