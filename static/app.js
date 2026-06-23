@@ -20,6 +20,13 @@ let workletNode = null;
 let playCtx = null;
 let ttsSampleRate = 24000; // 由后端 tts_format 消息告知
 
+// ---- 视觉（摄像头预览 / 闪光 / 拍照参数）----
+const videoEl = $("#camView");
+const flashEl = $("#flash");
+let camStream = null;
+let photoMaxSize = 640;
+let photoQuality = 0.8;
+
 // 播放调度
 let nextStart = 0;
 let sources = [];
@@ -206,7 +213,7 @@ function connect() {
   ws.onclose = () => {
     setConn(false);
     setState("idle");
-    stopMic();
+    stopAV();
     stopPlayback();
     btnStart.disabled = false;
     btnStop.disabled = true;
@@ -219,6 +226,10 @@ function handleEvent(obj) {
   switch (obj.type) {
     case "tts_format":
       if (obj.sample_rate) ttsSampleRate = obj.sample_rate;
+      break;
+    case "vision_config":
+      if (obj.photo_max_size) photoMaxSize = obj.photo_max_size;
+      if (obj.photo_quality) photoQuality = obj.photo_quality;
       break;
     case "state":
       setState(obj.state);
@@ -253,8 +264,8 @@ function handleEvent(obj) {
   }
 }
 
-// ---- 麦克风 ----
-async function startMic() {
+// ---- 音视频采集（麦克风 + 摄像头）----
+async function startAV() {
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
@@ -263,7 +274,9 @@ async function startMic() {
       noiseSuppression: true,
       autoGainControl: true,
     },
+    video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
   });
+  // 音频链路（同原逻辑）
   micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
   await micCtx.audioWorklet.addModule(WORKLET_URL);
   const srcNode = micCtx.createMediaStreamSource(micStream);
@@ -273,16 +286,24 @@ async function startMic() {
   };
   srcNode.connect(workletNode);
   workletNode.connect(micCtx.destination); // 拉流必需；worklet 输出静音，麦克风不会外放
-  setHint("麦克风已就绪，可以开口说话了");
+  // 视频预览
+  camStream = micStream;
+  videoEl.srcObject = micStream;
+  videoEl.classList.remove("hidden");
+  await videoEl.play().catch(() => {});
+  setHint("麦克风与摄像头已就绪，可以开口说话了");
 }
 
-function stopMic() {
+function stopAV() {
   try { if (workletNode) workletNode.disconnect(); } catch (e) {}
   try { if (micCtx) micCtx.close(); } catch (e) {}
   if (micStream) micStream.getTracks().forEach((t) => t.stop());
+  videoEl.srcObject = null;
+  videoEl.classList.add("hidden");
   workletNode = null;
   micCtx = null;
   micStream = null;
+  camStream = null;
 }
 
 // ---- 会话 ----
@@ -342,7 +363,7 @@ async function startSession() {
       ws.addEventListener("open", onOpen);
       ws.addEventListener("error", onErr);
     });
-    await startMic();
+    await startAV();
     btnStop.disabled = false;
   } catch (e) {
     const info = describeStartError(e);

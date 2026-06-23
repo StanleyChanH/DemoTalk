@@ -159,3 +159,33 @@ html, body {
 /* ---- scrollbar ---- */
 .transcript::-webkit-scrollbar { width: 8px; }
 .transcript::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 8px; }
+
+/* ---- 摄像头预览窗 ---- */
+#camView {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 160px;
+  height: 120px;
+  object-fit: cover;
+  transform: scaleX(-1);          /* 镜像 */
+  background: #000;
+  border-radius: 8px;
+  border: 1px solid rgba(255,255,255,0.2);
+  z-index: 10;
+}
+#camView.hidden { display: none; }
+
+/* ---- 闪光（拍照） ---- */
+#flash {
+  position: fixed; inset: 0;
+  background: #fff;
+  opacity: 0;
+  pointer-events: none;
+  z-index: 20;
+}
+#flash.fire { animation: flash 0.35s ease-out; }
+@keyframes flash {
+  0% { opacity: 0.8; }
+  100% { opacity: 0; }
+}
