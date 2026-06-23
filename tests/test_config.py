@@ -7,3 +7,8 @@ def test_vision_defaults():
     assert config.PHOTO_QUALITY == 0.8
     assert config.TAKE_PHOTO_TIMEOUT == 5
     assert config.MAX_TOOL_CALLS_PER_TURN == 3
+
+
+def test_mcp_defaults():
+    assert config.ENABLE_MCP is True
+    assert config.MCP_CONFIG_FILE == "mcp.json"

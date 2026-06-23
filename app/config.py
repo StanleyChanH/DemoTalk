@@ -80,3 +80,7 @@ PHOTO_MAX_SIZE: int = _int("PHOTO_MAX_SIZE", 640)
 PHOTO_QUALITY: float = _float("PHOTO_QUALITY", 0.8)
 TAKE_PHOTO_TIMEOUT: int = _int("TAKE_PHOTO_TIMEOUT", 5)
 MAX_TOOL_CALLS_PER_TURN: int = _int("MAX_TOOL_CALLS_PER_TURN", 3)
+
+# ---- MCP ----
+ENABLE_MCP: bool = _bool("ENABLE_MCP", True)
+MCP_CONFIG_FILE: str = _get("MCP_CONFIG_FILE", "mcp.json")
