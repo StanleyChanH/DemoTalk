@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 
 async def test_lifespan_loads_mcp_when_enabled(monkeypatch):
