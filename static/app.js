@@ -39,6 +39,43 @@ let twRAF = null;
 
 const STATE_TEXT = { idle: "待机", listening: "聆听中", thinking: "思考中", speaking: "播报中" };
 
+// ---- 拍照 ----
+function handleTakePhoto(callId) {
+  try {
+    if (!camStream || !videoEl.videoWidth) {
+      ws.send(JSON.stringify({ type: "photo_error", call_id: callId, message: "摄像头未就绪" }));
+      return;
+    }
+    const vw = videoEl.videoWidth, vh = videoEl.videoHeight;
+    const max = photoMaxSize;
+    let w = vw, h = vh;
+    if (Math.max(vw, vh) > max) {
+      const s = max / Math.max(vw, vh);
+      w = Math.round(vw * s);
+      h = Math.round(vh * s);
+    }
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    // 镜像绘制以匹配预览
+    const ctx2 = canvas.getContext("2d");
+    ctx2.translate(w, 0);
+    ctx2.scale(-1, 1);
+    ctx2.drawImage(videoEl, 0, 0, w, h);
+    flashEffect();
+    const data = canvas.toDataURL("image/jpeg", photoQuality);
+    ws.send(JSON.stringify({ type: "photo", call_id: callId, data }));
+  } catch (e) {
+    ws.send(JSON.stringify({ type: "photo_error", call_id: callId, message: String(e) }));
+  }
+}
+
+function flashEffect() {
+  flashEl.classList.remove("fire");
+  void flashEl.offsetWidth; // 强制重绘以重启动画
+  flashEl.classList.add("fire");
+}
+
 // ---- 麦克风 AudioWorklet：输出 16kHz/16bit/单声道 PCM（~100ms/帧）----
 const WORKLET_CODE = `
 class MicPcm extends AudioWorkletProcessor {
@@ -260,6 +297,12 @@ function handleEvent(obj) {
       break;
     case "error":
       addError(obj.message || "发生错误");
+      break;
+    case "take_photo":
+      handleTakePhoto(obj.call_id);
+      break;
+    case "tool_running":
+      if (obj.tool === "take_photo") setHint("正在拍照…");
       break;
   }
 }
