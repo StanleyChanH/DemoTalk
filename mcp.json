@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "howtocook-mcp": {
+      "type": "sse",
+      "url": "https://mcp.api-inference.modelscope.net/11cb95ca0ea64c/sse"
+    }
+  }
+}
