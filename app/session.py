@@ -40,6 +40,16 @@ class Session:
         self.llm = LLMService()
         self.tts: TTSService | None = None
 
+        from .tools.base import ToolContext  # noqa: F401  (类型用)
+        from .tools.registry import ToolRegistry
+        from .tools.builtin.take_photo import TakePhotoTool
+
+        self.tool_registry = ToolRegistry()
+        if config.ENABLE_VISION:
+            self.tool_registry.register(TakePhotoTool())
+        # 待回传的拍照请求：call_id -> Future
+        self._pending_photos: dict[str, asyncio.Future] = {}
+
         self.state = "idle"
         # turn 计数：barge-in 时自增，使进行中的旧轮失效
         self._current_turn = 0
@@ -127,54 +137,74 @@ class Session:
     # ---------- 一轮对话 ----------
 
     async def _run_turn(self, user_text: str, turn: int) -> None:
-        # 关键：本回合只持有/操作本地 tts 引用。
-        # barge-in 会把 self.tts 重置为新回合的实例；若旧协程恢复后还读写 self.tts，
-        # 会把残留文本/结束哨兵喂进新回合，损坏新回合播报。
         tts: TTSService | None = None
         try:
             await self._set_state("thinking")
-            # 为本轮新建 TTS（每个 SpeechSynthesizer 是一次性的）
             tts = TTSService(
                 on_audio=self._on_tts_audio,
                 on_state=self._on_tts_state,
                 loop=self.loop,
             )
-            self.tts = tts  # 仅作“当前回合”指针，供 barge-in 与音频身份校验
+            self.tts = tts
             tts.start()
 
             def active() -> bool:
                 return turn == self._current_turn and self._running
 
-            buffer = ""
-            async for delta in self.llm.astream(user_text):
-                # 每次从异步生成器恢复后都要重新校验回合是否仍有效
+            self.llm.add_user(user_text)
+            tools = self.tool_registry.schemas() if config.ENABLE_VISION else None
+
+            for _ in range(config.MAX_TOOL_CALLS_PER_TURN):
+                buffer = ""
+                tool_calls: list[dict] = []
+                async for event in self.llm.astream_once(tools=tools):
+                    if not active():
+                        tts.cancel()
+                        return
+                    if event["type"] == "text":
+                        delta = event["text"]
+                        await self._send({"type": "delta", "text": delta})
+                        buffer += delta
+                        while True:
+                            m = _SENTENCE_END.search(buffer)
+                            if not m:
+                                break
+                            sentence = buffer[: m.end()]
+                            buffer = buffer[m.end():]
+                            if active():
+                                tts.feed(sentence)
+                    elif event["type"] == "done":
+                        tool_calls = event.get("tool_calls", [])
                 if not active():
                     tts.cancel()
                     return
-                await self._send({"type": "delta", "text": delta})
-                if not active():
-                    tts.cancel()
-                    return
-                buffer += delta
-                # 把已成句的片段立刻喂给 TTS，降低首音延迟
-                while True:
-                    m = _SENTENCE_END.search(buffer)
-                    if not m:
-                        break
-                    sentence = buffer[: m.end()]
-                    buffer = buffer[m.end():]
+                if buffer.strip() and active():
+                    tts.feed(buffer)
+                if not tool_calls:
                     if active():
-                        tts.feed(sentence)
-
-            if not active():
-                tts.cancel()
-                return
-
-            if buffer.strip() and active():
-                tts.feed(buffer)
-            if active():
-                tts.finish()
-            # speaking 状态由首个音频块回调时设置
+                        tts.finish()
+                    break  # finish_reason=stop
+                # 执行本轮所有 tool_calls
+                for tc in tool_calls:
+                    if not active():
+                        tts.cancel()
+                        return
+                    call_id = tc.get("id", "")
+                    name = tc.get("function", {}).get("name", "")
+                    try:
+                        args = json.loads(tc.get("function", {}).get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        args = {}
+                    from .tools.base import ToolContext
+                    ctx = ToolContext(call_id=call_id, args=args, request_photo=self.request_photo)
+                    await self._send({"type": "tool_running", "tool": name})
+                    result = await self.tool_registry.execute(name, ctx)
+                    self.llm.add_tool(call_id, result.to_message_content())
+                # 带 tool 结果进入下一轮 astream_once
+            else:
+                # 达到 MAX_TOOL_CALLS_PER_TURN，强制收尾
+                if active():
+                    tts.finish()
         except Exception:
             log.exception("_run_turn 异常")
             await self._send({"type": "error", "message": "本轮对话失败"})
@@ -193,6 +223,31 @@ class Session:
             self.tts = None
         await self._send({"type": "cancel_playback"})
         await self._set_state("listening")
+
+    # ---------- 拍照（tool 交互）----------
+
+    async def request_photo(self, call_id: str) -> str | None:
+        """发 take_photo 请求，等待前端回传；超时返回 None。"""
+        fut = self.loop.create_future()
+        self._pending_photos[call_id] = fut
+        await self._send({"type": "take_photo", "call_id": call_id})
+        try:
+            return await asyncio.wait_for(fut, timeout=config.TAKE_PHOTO_TIMEOUT)
+        except asyncio.TimeoutError:
+            return None
+        finally:
+            self._pending_photos.pop(call_id, None)
+
+    async def resolve_photo(self, call_id: str, data: str | None) -> None:
+        fut = self._pending_photos.get(call_id)
+        if fut is not None and not fut.done():
+            fut.set_result(data)
+
+    async def handle_photo(self, call_id: str, data) -> None:
+        await self.resolve_photo(call_id, data)
+
+    async def handle_photo_error(self, call_id: str) -> None:
+        await self.resolve_photo(call_id, None)
 
     # ---------- TTS 回调（在 SDK 线程投递过来的协程里执行）----------
 
