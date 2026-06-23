@@ -19,6 +19,7 @@ from fastapi import WebSocket
 
 from . import config
 from .llm import LLMService
+from .mcp.manager import mcp_manager
 from .stt import STTService
 from .tts import TTSService
 
@@ -46,6 +47,8 @@ class Session:
         self.tool_registry = ToolRegistry()
         if config.ENABLE_VISION:
             self.tool_registry.register(TakePhotoTool())
+        if config.ENABLE_MCP:
+            mcp_manager.register_into(self.tool_registry)
         # 待回传的拍照请求：call_id -> Future
         self._pending_photos: dict[str, asyncio.Future] = {}
 
