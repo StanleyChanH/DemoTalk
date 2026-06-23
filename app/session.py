@@ -68,6 +68,14 @@ class Session:
                 "channels": 1,
             }
         )
+        if config.ENABLE_VISION:
+            await self._send(
+                {
+                    "type": "vision_config",
+                    "photo_max_size": config.PHOTO_MAX_SIZE,
+                    "photo_quality": config.PHOTO_QUALITY,
+                }
+            )
         await self._set_state("listening")
         # 在事件循环线程里启动 SDK（其内部会开 WS 线程）
         self.stt.start()

@@ -53,7 +53,7 @@ TTS_SAMPLE_RATE: int = _int("TTS_SAMPLE_RATE", 24000)
 # ---- LLM ----
 LLM_SYSTEM_PROMPT: str = _get(
     "LLM_SYSTEM_PROMPT",
-    "你是一个简洁友好的中文语音助手。请用 1-2 句话简短回答，口语化、适合语音播报，不要使用 markdown 或列表。",
+    "你是一个简洁友好的中文语音助手。请用 1-2 句话简短回答，口语化、适合语音播报，不要使用 markdown 或列表。当需要看用户周围画面时（例如用户问『这是什么』『前面有什么』），先调用 take_photo 拍照再回答。",
 )
 LLM_TEMPERATURE: float = _float("LLM_TEMPERATURE", 0.7)
 LLM_BASE_URL: str = _get("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
