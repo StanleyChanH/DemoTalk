@@ -40,7 +40,6 @@ class Session:
         self.llm = LLMService()
         self.tts: TTSService | None = None
 
-        from .tools.base import ToolContext  # noqa: F401  (类型用)
         from .tools.registry import ToolRegistry
         from .tools.builtin.take_photo import TakePhotoTool
 
@@ -199,7 +198,12 @@ class Session:
                     ctx = ToolContext(call_id=call_id, args=args, request_photo=self.request_photo)
                     await self._send({"type": "tool_running", "tool": name})
                     result = await self.tool_registry.execute(name, ctx)
+                    # 始终补上 tool result：astream_once 已 append assistant(tool_calls)，
+                    # 必须紧跟 tool 响应，否则下次 API 调用会因 tool_calls 无响应报错。
                     self.llm.add_tool(call_id, result.to_message_content())
+                    if not active():
+                        tts.cancel()
+                        return
                 # 带 tool 结果进入下一轮 astream_once
             else:
                 # 达到 MAX_TOOL_CALLS_PER_TURN，强制收尾
