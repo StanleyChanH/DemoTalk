@@ -126,7 +126,7 @@ DemoTalk/
 ## 协议说明（WebSocket）
 
 - 客户端 → 服务端：
-  - 文本：`{"type":"stop"}` 结束会话；`{"type":"cancel"}` 主动打断；`{"type":"photo","call_id":...,"data":...}` 拍照回传（含 call_id 与 base64 JPEG）；`{"type":"photo_error","call_id":...,"error":...}` 拍照失败。
+  - 文本：`{"type":"stop"}` 结束会话；`{"type":"cancel"}` 主动打断；`{"type":"photo","call_id":...,"data":...}` 拍照回传（含 call_id 与 base64 JPEG）；`{"type":"photo_error","call_id":...,"message":...}` 拍照失败。
   - 二进制：麦克风 16kHz/16bit/单声道 PCM。
 - 服务端 → 客户端：
   - `tts_format` / `state` / `partial`（实时转写）/ `user_final` / `delta`（助手增量）/ `tts_start` / `tts_end` / `cancel_playback` / `error`；视觉相关：`take_photo`（要求拍照，含 `call_id`）/ `tool_running`（工具执行中，含 `tool` 名）/ `vision_config`（下发拍照参数）。
