@@ -40,7 +40,11 @@ class McpManager:
             log.info("MCP server %s 注册了 %d 个工具", cfg.name, len(tools))
 
     def register_into(self, registry: ToolRegistry) -> None:
-        """把所有 adapter 注册进给定 registry（每 session 调一次）。"""
+        """把所有 adapter 注册进给定 registry（每 session 调一次）。
+
+        命名：MCP tool 用其原始 name（通常已带 server 前缀，如 mcp_howtocook_*），
+        调用方需保证跨 server / 与 take_photo 唯一；本方法不做冲突降级。
+        """
         for a in self._adapters:
             registry.register(a)
 

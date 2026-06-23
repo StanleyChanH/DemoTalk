@@ -162,7 +162,7 @@ class Session:
                 return turn == self._current_turn and self._running
 
             self.llm.add_user(user_text)
-            tools = self.tool_registry.schemas() if config.ENABLE_VISION else None
+            tools = self.tool_registry.schemas() or None
 
             for _ in range(config.MAX_TOOL_CALLS_PER_TURN):
                 buffer = ""
