@@ -103,6 +103,8 @@ async def ws_endpoint(ws: WebSocket):
                     await session.handle_photo(obj.get("call_id", ""), obj.get("data"))
                 elif t == "photo_error":
                     await session.handle_photo_error(obj.get("call_id", ""))
+                elif t == "set_flags":
+                    await session.set_flags(obj)
                 else:
                     await session.handle_control(obj)
     except WebSocketDisconnect:

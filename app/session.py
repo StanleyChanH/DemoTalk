@@ -59,6 +59,8 @@ class Session:
         # turn 计数：barge-in 时自增，使进行中的旧轮失效
         self._current_turn = 0
         self._running = True
+        # barge-in：会话级开关（默认取 .env，前端 set_flags 可动态覆盖）
+        self.barge_in_enabled = config.ENABLE_BARGE_IN
         # 当前回合的 asyncio.Task，便于 shutdown 时取消/回收
         self._turn_task: asyncio.Task | None = None
         # 语义结束：end_conversation 工具触发后置 True，待 TTS 播完再断连
@@ -86,6 +88,16 @@ class Session:
                     "photo_quality": config.PHOTO_QUALITY,
                 }
             )
+        # 下发三开关的 .env 默认值 + MCP 可用性，供前端初始化 toggle
+        await self._send(
+            {
+                "type": "config_defaults",
+                "barge_in": config.ENABLE_BARGE_IN,
+                "mcp": config.ENABLE_MCP,
+                "end_by_voice": config.ENABLE_END_BY_VOICE,
+                "mcp_available": mcp_manager.has_tools(),
+            }
+        )
         await self._set_state("listening")
         # 在事件循环线程里启动 SDK（其内部会开 WS 线程）
         self.stt.start()
@@ -135,6 +147,34 @@ class Session:
             await self._barge_in()
         # stop 由 WS 层处理（断开）
 
+    async def set_flags(self, msg: dict) -> None:
+        """前端 set_flags：动态应用 barge_in / mcp / end_by_voice 三个开关。
+
+        - barge_in：改会话属性，下一句句末生效
+        - mcp：会话级屏蔽/恢复 MCP 工具（连接保持），下一轮 LLM 调用生效
+        - end_by_voice：增删 end_conversation 工具，下一轮 LLM 调用生效
+        每个字段用 `if key in msg` 守卫，部分/重复均幂等。
+        """
+        if "barge_in" in msg:
+            self.barge_in_enabled = bool(msg["barge_in"])
+
+        if "end_by_voice" in msg:
+            want = bool(msg["end_by_voice"])
+            has = self.tool_registry.get("end_conversation") is not None
+            if want and not has:
+                from .tools.builtin.end_conversation import EndConversationTool
+                self.tool_registry.register(EndConversationTool())
+            elif not want and has:
+                self.tool_registry.unregister("end_conversation")
+
+        if "mcp" in msg:
+            want = bool(msg["mcp"])
+            has_mcp = any(src == "mcp" for src in self.tool_registry.sources().values())
+            if want and not has_mcp:
+                mcp_manager.register_into(self.tool_registry)
+            elif not want and has_mcp:
+                self.tool_registry.clear_by_source("mcp")
+
     # ---------- STT 回调（在 SDK 线程投递过来的协程里执行）----------
 
     async def _on_partial(self, text: str) -> None:
@@ -154,7 +194,7 @@ class Session:
         await self._send({"type": "user_final", "text": text})
 
         if self.state == "speaking":
-            if config.ENABLE_BARGE_IN:
+            if self.barge_in_enabled:
                 await self._barge_in()
             else:
                 # 不打断：忽略说话期间的输入
