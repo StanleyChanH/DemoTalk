@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import re
@@ -28,6 +29,22 @@ log = logging.getLogger("demotalk.session")
 
 # 句子结束符：中英文标点 + 换行。用于把 LLM 增量切成可立即合成的小段
 _SENTENCE_END = re.compile(r"[。！？!?；;\n]")
+
+# 回声检测：文本归一化（去标点/空格/符号，转小写；保留中文与字母数字）
+_ECHO_STRIP = re.compile(r"\W+", re.UNICODE)
+
+
+def _echo_normalize(s: str) -> str:
+    r"""归一化用于回声比对：去掉标点/空格/符号，转小写。Python3 默认 re.UNICODE 下
+    \W = 非字母数字下划线（含中英文标点、空格），中文字符属于 \w 故保留。"""
+    return _ECHO_STRIP.sub("", s).lower()
+
+
+def _echo_similarity(a: str, b: str) -> float:
+    """两个已归一化字符串的相似度（difflib 最长连续匹配比例，0-1）。"""
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
 
 
 class Session:
