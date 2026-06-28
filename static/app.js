@@ -30,6 +30,7 @@ let photoQuality = 0.8;
 // 播放调度
 let nextStart = 0;
 let sources = [];
+let endingByVoice = false;
 
 // 打字机
 let asstEl = null;      // 当前助手气泡 DOM
@@ -215,7 +216,11 @@ function playPcm(arrayBuffer) {
   }
   nextStart = nextStart + buf.duration;
   sources.push(node);
-  node.onended = () => { sources = sources.filter((s) => s !== node); };
+  node.onended = () => {
+    sources = sources.filter((s) => s !== node);
+    // 语义结束：告别语播完（队列空）再断连，避免截断尾音
+    if (endingByVoice && sources.length === 0) stopSession();
+  };
 }
 
 function stopPlayback() {
@@ -294,6 +299,14 @@ function handleEvent(obj) {
     case "cancel_playback":
       stopPlayback();
       flushTypewriter();
+      break;
+    case "conversation_end":
+      flushTypewriter();
+      endingByVoice = true;
+      if (sources.length === 0) {
+        // 已无音频在播，短延迟后收尾（让最后一块 PCM 落地）
+        setTimeout(() => { if (endingByVoice) stopSession(); }, 300);
+      }
       break;
     case "error":
       addError(obj.message || "发生错误");
