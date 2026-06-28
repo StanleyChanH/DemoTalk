@@ -37,7 +37,7 @@
 | `app/config.py` | 改 | 新增 `ENABLE_END_BY_VOICE`；默认 prompt 追加引导 |
 | `.env.example` | 改 | 增补 `ENABLE_END_BY_VOICE` |
 | `static/app.js` | 改 | `conversation_end` 事件处理 + 播放队列空后 `stopSession` |
-| `tests/tools/test_end_conversation.py` | 新增 | tool 单测 |
+| `tests/tools/builtin/test_end_conversation.py` | 新增 | tool 单测 |
 | `tests/test_session_end.py` | 新增 | session 收尾单测 |
 | `README.md` | 改 | 配置项 + 协议事件说明 |
 
@@ -161,7 +161,7 @@ ENABLE_END_BY_VOICE: bool = _bool("ENABLE_END_BY_VOICE", True)
 
 ### 单测
 
-`tests/tools/test_end_conversation.py`：
+`tests/tools/builtin/test_end_conversation.py`：
 1. `EndConversationTool.schema` 含 name/description/parameters。
 2. `execute` 调用注入的 `request_end_conversation` 回调（mock 验证被 await）；返回 ToolResult。
 
