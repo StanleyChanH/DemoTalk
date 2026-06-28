@@ -76,6 +76,7 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `LLM_TEMPERATURE` | `0.7` | 采样温度 |
 | `MAX_SENTENCE_SILENCE` | `800` | STT 句尾静音毫秒，越小越快判定说完（200–6000） |
 | `ENABLE_BARGE_IN` | `true` | 是否允许打断 |
+| `VAD_SENSITIVITY` | `50` | 前端语音门控灵敏度 0-100，越大越易触发（背景噪声多则调低） |
 | `ENABLE_VISION` | `true` | 是否启用视觉（take_photo 工具） |
 | `PHOTO_MAX_SIZE` | `640` | 拍照最长边像素 |
 | `PHOTO_QUALITY` | `0.8` | JPEG 质量 |
@@ -89,6 +90,14 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ### 运行时开关（前端）
 
 `ENABLE_BARGE_IN` / `ENABLE_MCP` / `ENABLE_END_BY_VOICE` 三项除 `.env` 默认值外，还可在浏览器右上角齿轮设置面板中**运行时切换**，立即生效（中断下一句句末生效；MCP / 语义结束下一轮 LLM 调用生效）。切换状态用 localStorage 记住，优先级：`localStorage 上次值` > `.env 默认`。MCP 仅屏蔽当前会话的工具暴露，不卸载连接。
+
+### 语音门控（VAD）
+
+前端接入 Silero VAD（`@ricky0123/vad-web`）：只有检测到**人声**的麦克风帧才上传给 ASR，静音与非人声噪声（键盘、咳嗽、电视音乐、风声等）被丢弃，显著降低背景噪声对对话的干扰。模型本地托管（`static/vad/`），离线可用；库初始化失败时自动回退到无门控直传。
+
+灵敏度滑块（设置面板，0-100，默认取 `VAD_SENSITIVITY`）经 `vad.setOptions()` 实时生效，localStorage 记住上次选择。
+
+**能力边界：** VAD 能区分「人声 vs 非人声噪声」，但**无法区分说话人来源**——环境里的**其他人声**（旁人说话、电视/视频里的人声）仍可能被识别并上传。这是开放式麦克风的固有限制；如需彻底屏蔽环境人声，需引入按住说话（Push-to-Talk）或唤醒词（当前范围外）。
 
 ### 关于 TTS 模型（重要）
 
