@@ -67,6 +67,9 @@ STT_LANGUAGE_HINTS: list[str] = ["zh", "en"]
 # ---- 行为 ----
 ENABLE_BARGE_IN: bool = _bool("ENABLE_BARGE_IN", True)
 
+# ---- VAD（前端语音门控灵敏度，0-100，越大越灵敏；50=中等）----
+VAD_SENSITIVITY: int = _int("VAD_SENSITIVITY", 50)
+
 # ---- 服务 ----
 HOST: str = _get("HOST", "127.0.0.1")
 PORT: int = _int("PORT", 8000)

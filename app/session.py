@@ -96,6 +96,7 @@ class Session:
                 "mcp": config.ENABLE_MCP,
                 "end_by_voice": config.ENABLE_END_BY_VOICE,
                 "mcp_available": mcp_manager.has_tools(),
+                "vad_sensitivity": config.VAD_SENSITIVITY,
             }
         )
         await self._set_state("listening")

@@ -61,6 +61,7 @@
           <span class="corner bl"></span>
           <span class="corner br"></span>
           <div class="cam-badge">取景中</div>
+          <span id="vadIndicator" class="vad-indicator" title="语音检测"></span>
         </div>
       </aside>
     </div>
@@ -99,6 +100,16 @@
         <div class="toggle-desc">说「再见」等，由助手自动结束对话</div>
       </div>
       <button class="switch" role="switch" aria-checked="true" aria-label="语义结束"></button>
+    </div>
+    <div class="toggle-row slider-row">
+      <div class="toggle-info">
+        <div class="toggle-label">麦克风灵敏度</div>
+        <div class="toggle-desc">值越大越易触发；背景噪声多则调低</div>
+      </div>
+      <div class="slider-wrap">
+        <input id="vadRange" class="vad-range" type="range" min="0" max="100" value="50" aria-label="麦克风灵敏度" />
+        <span id="vadRangeVal" class="vad-range-val">50</span>
+      </div>
     </div>
     <div class="settings-foot">默认值来自 .env，切换后立即生效</div>
   </div>

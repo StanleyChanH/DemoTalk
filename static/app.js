@@ -14,7 +14,9 @@ const hintEl = $("#hint");
 const btnSettings = $("#btnSettings");
 const btnCloseSettings = $("#btnCloseSettings");
 const settingsPanel = $("#settingsPanel");
-const toggleRows = settingsPanel.querySelectorAll(".toggle-row");
+const toggleRows = settingsPanel.querySelectorAll(".toggle-row:not(.slider-row)");
+const vadRangeEl = $("#vadRange");
+const vadRangeValEl = $("#vadRangeVal");
 
 // ---- 状态 ----
 let ws = null;
@@ -31,6 +33,11 @@ let camStream = null;
 let photoMaxSize = 640;
 let photoQuality = 0.8;
 
+// ---- VAD（语音活动检测）运行态 ----
+let vadSending = false;      // onSpeechRealStart→true / onSpeechEnd→false
+let vadPreRoll = [];         // 候选期头音缓冲（onSpeechRealStart 时 flush；misfire 时丢弃）
+const vadIndicatorEl = $("#vadIndicator");
+
 // 播放调度
 let nextStart = 0;
 let sources = [];
@@ -39,13 +46,14 @@ let endingByVoice = false;
 // ---- 功能开关（中断 / MCP / 语义结束）----
 const FLAG_KEYS = ["barge_in", "mcp", "end_by_voice"];
 const LS_KEY = "demotalk.flags";
-let flags = { barge_in: true, mcp: true, end_by_voice: true };
+let flags = { barge_in: true, mcp: true, end_by_voice: true, vad_sensitivity: 50 };
 let mcpAvailable = true;
 
 function loadFlags() {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
     for (const k of FLAG_KEYS) if (typeof saved[k] === "boolean") flags[k] = saved[k];
+    if (typeof saved.vad_sensitivity === "number") flags.vad_sensitivity = saved.vad_sensitivity;
   } catch (e) { /* 损坏则忽略，用默认 */ }
 }
 function saveFlags() {
@@ -285,6 +293,95 @@ function connect() {
   ws.onerror = () => { setHint("连接出错"); };
 }
 
+// ---- VAD 灵敏度映射 ----
+// s: 0-100，越大越灵敏 → silero 三阈值
+function sensitivityToVadOpts(s) {
+  const t = Math.max(0, Math.min(100, s)) / 100;
+  const positive = 0.75 - 0.45 * t;                  // s=0→0.75（迟钝），s=100→0.30（灵敏）
+  const negative = Math.max(0.10, positive - 0.15);  // 滞后防抖
+  const minSpeechMs = Math.round(600 - 450 * t);     // s=0→600（严格），s=100→150（宽松）
+  return { positiveSpeechThreshold: positive, negativeSpeechThreshold: negative, minSpeechMs };
+}
+
+function renderVadSlider() {
+  const v = Math.round(flags.vad_sensitivity);
+  if (vadRangeEl) vadRangeEl.value = v;
+  if (vadRangeValEl) vadRangeValEl.textContent = v;
+}
+
+// VAD 实例由 Task 4 创建；此前 applyVadSensitivity 仅更新 cap，接入后 setOptions 才生效
+let vadInstance = null;
+let vadPreRollCap = 8;  // 候选期头音缓冲容量（帧），按 minSpeechMs 动态更新（silero 每帧≈32ms）
+function applyVadSensitivity() {
+  const opts = sensitivityToVadOpts(flags.vad_sensitivity);
+  vadPreRollCap = Math.max(1, Math.ceil(opts.minSpeechMs / 32));
+  if (vadInstance) {
+    try { vadInstance.setOptions(opts); } catch (e) {}
+  }
+}
+
+// ---- VAD 帧发送 + 指示 ----
+function sendVadFrame(frame) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  const i16 = new Int16Array(frame.length);
+  for (let i = 0; i < frame.length; i++) {
+    let s = Math.max(-1, Math.min(1, frame[i]));
+    i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  ws.send(i16.buffer);
+}
+
+function setVadIndicator(on) {
+  if (vadIndicatorEl) vadIndicatorEl.classList.toggle("active", on);
+}
+
+// ---- createVad：动态 import + MicVAD.new + 回调接线 ----
+async function createVad(stream) {
+  const mod = await import("https://cdn.jsdelivr.net/npm/@ricky0123/vad-web@0.0.30/+esm");
+  const MicVAD = mod.MicVAD || mod.default?.MicVAD || mod.default;
+  const initOpts = sensitivityToVadOpts(flags.vad_sensitivity);
+  vadPreRollCap = Math.max(1, Math.ceil(initOpts.minSpeechMs / 32));
+  const vad = await MicVAD.new({
+    getStream: async () => stream,
+    baseAssetPath: "/static/vad/",
+    // onnxWASMBasePath 必须用绝对 URL：ort 的 .mjs loader 随 vad-web 从 CDN 加载，
+    // 内部用 new URL(path, import.meta.url) 解析 wasm 路径——若给相对 "/static/vad/"，
+    // 会被解析到 CDN 域（cdn.jsdelivr.net/static/vad/...）而 404。绝对 URL 不受基址影响。
+    onnxWASMBasePath: location.origin + "/static/vad/",
+    ...initOpts,
+    onSpeechStart: () => {
+      // 进入候选：重置缓冲，开始积累（由 onFrameProcessed 的 else 分支）
+      vadPreRoll = [];
+    },
+    onSpeechRealStart: () => {
+      // 确认达到 minSpeechMs：flush 完整头音后开始逐帧上传。
+      // 短爆点（< minSpeechMs）不会到这，从而被过滤。
+      vadSending = true;
+      for (const f of vadPreRoll) sendVadFrame(f);
+      vadPreRoll = [];
+      setVadIndicator(true);
+    },
+    onFrameProcessed: (_probs, frame) => {
+      if (vadSending) {
+        sendVadFrame(frame);
+      } else {
+        // 候选期：积累帧（容量 = minSpeechFrames），超容量丢最旧
+        vadPreRoll.push(frame);
+        while (vadPreRoll.length > vadPreRollCap) vadPreRoll.shift();
+      }
+    },
+    onSpeechEnd: () => {
+      vadSending = false;
+      setVadIndicator(false);
+    },
+    onVADMisfire: () => {
+      // 短于 minSpeechMs 的段：丢弃缓冲，不上传
+      vadPreRoll = [];
+    },
+  });
+  return vad;
+}
+
 function renderToggles() {
   toggleRows.forEach((row) => {
     const key = row.dataset.flag;
@@ -313,7 +410,12 @@ function applyDefaults(defaults) {
     else if (typeof defaults[k] === "boolean") flags[k] = defaults[k];
   }
   mcpAvailable = defaults.mcp_available !== false;
+  // vad_sensitivity：localStorage > .env 默认
+  if (typeof saved.vad_sensitivity === "number") flags.vad_sensitivity = saved.vad_sensitivity;
+  else if (typeof defaults.vad_sensitivity === "number") flags.vad_sensitivity = defaults.vad_sensitivity;
   renderToggles();
+  renderVadSlider();
+  applyVadSensitivity();
   sendFlags(); // 连接后立即把会话对齐到用户选择
 }
 
@@ -377,6 +479,19 @@ function handleEvent(obj) {
 }
 
 // ---- 音视频采集（麦克风 + 摄像头）----
+// fallback：VAD 不可用时，回退到无门控的 MicPcm 直传
+async function startAVFallback(stream) {
+  micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
+  await micCtx.audioWorklet.addModule(WORKLET_URL);
+  const srcNode = micCtx.createMediaStreamSource(stream);
+  workletNode = new AudioWorkletNode(micCtx, "mic-pcm");
+  workletNode.port.onmessage = (ev) => {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data);
+  };
+  srcNode.connect(workletNode);
+  workletNode.connect(micCtx.destination);
+}
+
 async function startAV() {
   micStream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -388,25 +503,31 @@ async function startAV() {
     },
     video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
   });
-  // 音频链路（同原逻辑）
-  micCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
-  await micCtx.audioWorklet.addModule(WORKLET_URL);
-  const srcNode = micCtx.createMediaStreamSource(micStream);
-  workletNode = new AudioWorkletNode(micCtx, "mic-pcm");
-  workletNode.port.onmessage = (ev) => {
-    if (ws && ws.readyState === WebSocket.OPEN) ws.send(ev.data); // 二进制 PCM 上行
-  };
-  srcNode.connect(workletNode);
-  workletNode.connect(micCtx.destination); // 拉流必需；worklet 输出静音，麦克风不会外放
-  // 视频预览
+  // 视频预览（不变）
   camStream = micStream;
   videoEl.srcObject = micStream;
   videoEl.classList.remove("hidden");
   await videoEl.play().catch(() => {});
-  setHint("麦克风与摄像头已就绪，可以开口说话了");
+  // 音频链路：优先 VAD 门控；初始化失败回退 MicPcm 直传
+  try {
+    setHint("VAD 加载中…");
+    vadInstance = await createVad(micStream);
+    vadInstance.start();
+    setHint("麦克风与摄像头已就绪，可以开口说话了");
+  } catch (e) {
+    console.warn("VAD 初始化失败，回退直传", e);
+    vadInstance = null;
+    setVadIndicator(false);
+    await startAVFallback(micStream);
+    setHint("VAD 不可用，已回退直传模式");
+  }
 }
 
 function stopAV() {
+  if (vadInstance) { try { vadInstance.pause(); } catch (e) {} vadInstance = null; }
+  vadSending = false;
+  vadPreRoll = [];
+  setVadIndicator(false);
   try { if (workletNode) workletNode.disconnect(); } catch (e) {}
   try { if (micCtx) micCtx.close(); } catch (e) {}
   if (micStream) micStream.getTracks().forEach((t) => t.stop());
@@ -528,6 +649,18 @@ toggleRows.forEach((row) => {
   });
 });
 
+if (vadRangeEl) {
+  vadRangeEl.addEventListener("input", () => {
+    flags.vad_sensitivity = Number(vadRangeEl.value);
+    saveFlags();
+    renderVadSlider();
+    applyVadSensitivity();
+  });
+  // 阻止滑块拖动冒泡触发「面板外点击关闭」
+  vadRangeEl.addEventListener("click", (e) => e.stopPropagation());
+}
+
 // 初始渲染（未连接时也显示开关，供用户预先设置）
 loadFlags();
 renderToggles();
+renderVadSlider();

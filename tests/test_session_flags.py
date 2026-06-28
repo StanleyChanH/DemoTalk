@@ -134,3 +134,4 @@ async def test_start_emits_config_defaults(monkeypatch):
     assert cd["mcp"] == config.ENABLE_MCP
     assert cd["end_by_voice"] == config.ENABLE_END_BY_VOICE
     assert "mcp_available" in cd
+    assert cd["vad_sensitivity"] == config.VAD_SENSITIVITY
