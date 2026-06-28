@@ -55,3 +55,47 @@ async def test_close_all_closes_clients():
     await m.load_all([ServerConfig(name="s", type="sse", url="u")])
     await m.close_all()
     c.close.assert_awaited_once()
+
+
+# --- feature-toggles: source 标记 + has_tools() ---
+
+from app.mcp.manager import McpManager  # noqa: E402
+
+
+class _FakeAdapter:
+    """模拟 McpToolAdapter：registry 只用到 .schema['name']。"""
+
+    def __init__(self, name: str):
+        self.schema = {
+            "name": name,
+            "description": "mcp tool",
+            "parameters": {"type": "object", "properties": {}},
+        }
+
+
+def test_has_tools_false_when_empty():
+    assert McpManager().has_tools() is False
+
+
+def test_has_tools_true_with_adapters():
+    m = McpManager()
+    m._adapters = [_FakeAdapter("x")]
+    assert m.has_tools() is True
+
+
+def test_register_into_marks_mcp_source():
+    m = McpManager()
+    m._adapters = [_FakeAdapter("mcp_a"), _FakeAdapter("mcp_b")]
+    r = ToolRegistry()
+    m.register_into(r)
+    assert r.sources() == {"mcp_a": "mcp", "mcp_b": "mcp"}
+
+
+def test_clear_by_source_after_register_into():
+    m = McpManager()
+    m._adapters = [_FakeAdapter("mcp_a")]
+    r = ToolRegistry()
+    r.register(_FakeAdapter("builtin1"))
+    m.register_into(r)
+    r.clear_by_source("mcp")
+    assert set(r.sources()) == {"builtin1"}
