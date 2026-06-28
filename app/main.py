@@ -58,6 +58,8 @@ async def healthz():
             },
             "tts_sample_rate": config.TTS_SAMPLE_RATE,
             "barge_in": config.ENABLE_BARGE_IN,
+            "mcp": config.ENABLE_MCP,
+            "end_by_voice": config.ENABLE_END_BY_VOICE,
         }
     )
 

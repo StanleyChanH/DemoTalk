@@ -59,15 +59,16 @@ async def test_close_all_closes_clients():
 
 # --- feature-toggles: source 标记 + has_tools() ---
 
-from app.mcp.manager import McpManager  # noqa: E402
-
-
 class _FakeAdapter:
     """模拟 McpToolAdapter：registry 只用到 .schema['name']。"""
 
     def __init__(self, name: str):
-        self.schema = {
-            "name": name,
+        self._name = name
+
+    @property
+    def schema(self):
+        return {
+            "name": self._name,
             "description": "mcp tool",
             "parameters": {"type": "object", "properties": {}},
         }

@@ -305,11 +305,13 @@ function setFlag(key, val) {
   sendFlags();
 }
 function applyDefaults(defaults) {
-  // localStorage 上次值 > .env 默认
-  loadFlags();
-  if (typeof defaults.barge_in === "boolean" && !(LS_KEY in localStorage)) flags.barge_in = defaults.barge_in;
-  if (typeof defaults.mcp === "boolean" && !(LS_KEY in localStorage)) flags.mcp = defaults.mcp;
-  if (typeof defaults.end_by_voice === "boolean" && !(LS_KEY in localStorage)) flags.end_by_voice = defaults.end_by_voice;
+  // 字段级优先级：localStorage 上次值 > .env 默认
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}"); } catch (e) { /* 损坏则忽略 */ }
+  for (const k of FLAG_KEYS) {
+    if (typeof saved[k] === "boolean") flags[k] = saved[k];
+    else if (typeof defaults[k] === "boolean") flags[k] = defaults[k];
+  }
   mcpAvailable = defaults.mcp_available !== false;
   renderToggles();
   sendFlags(); // 连接后立即把会话对齐到用户选择

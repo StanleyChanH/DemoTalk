@@ -22,7 +22,11 @@ def _sent_objects(ws):
 
 class _FakeAdapter:
     def __init__(self, name):
-        self.schema = {"name": name, "description": "mcp", "parameters": {"type": "object", "properties": {}}}
+        self._name = name
+
+    @property
+    def schema(self):
+        return {"name": self._name, "description": "mcp", "parameters": {"type": "object", "properties": {}}}
 
 
 # ---- barge_in 会话属性 ----

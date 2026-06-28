@@ -170,6 +170,7 @@ class Session:
             want = bool(msg["mcp"])
             has_mcp = any(src == "mcp" for src in self.tool_registry.sources().values())
             if want and not has_mcp:
+                # 依赖进程级 adapter 列表；若 mcp_manager 已 close_all 则注册 0 个工具（不可恢复）
                 mcp_manager.register_into(self.tool_registry)
             elif not want and has_mcp:
                 self.tool_registry.clear_by_source("mcp")
