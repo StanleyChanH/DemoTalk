@@ -70,6 +70,11 @@ ENABLE_BARGE_IN: bool = _bool("ENABLE_BARGE_IN", True)
 # ---- VAD（前端语音门控灵敏度，0-100，越大越灵敏；50=中等）----
 VAD_SENSITIVITY: int = _int("VAD_SENSITIVITY", 50)
 
+# ---- 回声检测（外放自循环防护；后端文本级，比对 STT final 与最近 TTS 文本）----
+ENABLE_ECHO_DETECT: bool = _bool("ENABLE_ECHO_DETECT", True)
+ECHO_SIMILARITY_THRESHOLD: float = _float("ECHO_SIMILARITY_THRESHOLD", 0.6)
+ECHO_HANGOVER_MS: int = _int("ECHO_HANGOVER_MS", 1200)
+
 # ---- 服务 ----
 HOST: str = _get("HOST", "127.0.0.1")
 PORT: int = _int("PORT", 8000)
