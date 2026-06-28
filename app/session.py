@@ -266,6 +266,19 @@ class Session:
         不立即关闭——等当前 TTS（告别语）播完后由 _on_tts_state 触发。"""
         self._ending = True
 
+    async def _force_close_after(self, delay: float) -> None:
+        """兜底：delay 秒后若会话仍存活，主动关闭 WS（防前端未关）。"""
+        try:
+            await asyncio.sleep(delay)
+        except asyncio.CancelledError:
+            return
+        if self._running:
+            log.info("结束对话兜底：主动关闭 WS（%ss 内前端未关）", delay)
+            try:
+                await self.ws.close()
+            except Exception:
+                log.debug("兜底关闭 WS 失败", exc_info=True)
+
     # ---------- 拍照（tool 交互）----------
 
     async def request_photo(self, call_id: str) -> str | None:
@@ -310,7 +323,12 @@ class Session:
             await self._set_state("speaking")
         elif event == "tts_end":
             await self._send({"type": "tts_end"})
-            await self._set_state("listening")
+            if self._ending:
+                # 告别语已播完：通知前端收尾 + 兜底强制关闭
+                await self._send({"type": "conversation_end"})
+                self._end_fallback = asyncio.create_task(self._force_close_after(30.0))
+            else:
+                await self._set_state("listening")
         elif event == "tts_error":
             await self._send({"type": "error", "message": "语音合成失败"})
             await self._send({"type": "tts_end"})  # 仍通知前端收尾（flush 打字机）

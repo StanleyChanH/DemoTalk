@@ -101,3 +101,68 @@ def test_skips_end_conversation_when_disabled(monkeypatch):
     s = session_mod.Session(MagicMock(), asyncio.new_event_loop())
     names = [t["function"]["name"] for t in s.tool_registry.schemas()]
     assert "end_conversation" not in names
+
+
+async def test_tts_end_emits_conversation_end_when_ending(monkeypatch):
+    """_ending 时 tts_end：发 tts_end + conversation_end，并调度兜底关闭（用 mock 避免真 30s）。"""
+    s = _make_session()
+    s._ending = True
+    fake_tts = MagicMock()
+    s.tts = fake_tts
+
+    scheduled = {}
+
+    async def fake_force_close(delay):
+        scheduled["delay"] = delay
+
+    s._force_close_after = fake_force_close
+
+    sent = []
+
+    async def capture_send(obj):
+        sent.append(obj["type"])
+
+    s._send = capture_send
+
+    await s._on_tts_state("tts_end", fake_tts)
+    await asyncio.sleep(0)  # 让 create_task 调度的 fake_force_close 跑完
+
+    assert "tts_end" in sent
+    assert "conversation_end" in sent
+    assert scheduled["delay"] == 30.0
+
+
+async def test_tts_end_sets_listening_when_not_ending(monkeypatch):
+    """非结束的正常 tts_end：维持原行为（set listening），不发 conversation_end。"""
+    s = _make_session()
+    s._ending = False
+    fake_tts = MagicMock()
+    s.tts = fake_tts
+
+    sent = []
+
+    async def capture_send(obj):
+        sent.append(obj["type"])
+
+    s._send = capture_send
+
+    await s._on_tts_state("tts_end", fake_tts)
+
+    assert "conversation_end" not in sent
+    assert s.state == "listening"
+
+
+async def test_force_close_after_closes_ws_when_running():
+    """兜底：_running=True 时 _force_close_after(0) 调 ws.close()。"""
+    s = _make_session()
+    s._running = True
+    await s._force_close_after(0)
+    s.ws.close.assert_awaited_once()
+
+
+async def test_force_close_after_skips_when_not_running():
+    """兜底：_running=False 时 _force_close_after(0) 不调 ws.close()。"""
+    s = _make_session()
+    s._running = False
+    await s._force_close_after(0)
+    s.ws.close.assert_not_called()
