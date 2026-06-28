@@ -43,10 +43,13 @@ class Session:
 
         from .tools.registry import ToolRegistry
         from .tools.builtin.take_photo import TakePhotoTool
+        from .tools.builtin.end_conversation import EndConversationTool
 
         self.tool_registry = ToolRegistry()
         if config.ENABLE_VISION:
             self.tool_registry.register(TakePhotoTool())
+        if config.ENABLE_END_BY_VOICE:
+            self.tool_registry.register(EndConversationTool())
         if config.ENABLE_MCP:
             mcp_manager.register_into(self.tool_registry)
         # 待回传的拍照请求：call_id -> Future
@@ -58,6 +61,10 @@ class Session:
         self._running = True
         # 当前回合的 asyncio.Task，便于 shutdown 时取消/回收
         self._turn_task: asyncio.Task | None = None
+        # 语义结束：end_conversation 工具触发后置 True，待 TTS 播完再断连
+        self._ending = False
+        # 兜底强制关闭 WS 的延时任务
+        self._end_fallback: asyncio.Task | None = None
 
     # ---------- 生命周期 ----------
 
@@ -127,6 +134,9 @@ class Session:
 
     async def _on_final(self, text: str) -> None:
         if not self._running:
+            return
+        if self._ending:
+            # 收尾期间忽略新输入，避免打断告别语 / 破坏结束流程
             return
         text = text.strip()
         if not text:
@@ -206,7 +216,12 @@ class Session:
                     except json.JSONDecodeError:
                         args = {}
                     from .tools.base import ToolContext
-                    ctx = ToolContext(call_id=call_id, args=args, request_photo=self.request_photo)
+                    ctx = ToolContext(
+                        call_id=call_id,
+                        args=args,
+                        request_photo=self.request_photo,
+                        request_end_conversation=self.request_end_conversation,
+                    )
                     await self._send({"type": "tool_running", "tool": name})
                     result = await self.tool_registry.execute(name, ctx)
                     # 始终补上 tool result：astream_once 已 append assistant(tool_calls)，
@@ -215,6 +230,11 @@ class Session:
                     if not active():
                         tts.cancel()
                         return
+                # end_conversation 已请求结束：不再调 LLM，让告别语 TTS 自然播完
+                if self._ending:
+                    if active():
+                        tts.finish()
+                    break
                 # 带 tool 结果进入下一轮 astream_once
             else:
                 # 达到 MAX_TOOL_CALLS_PER_TURN，强制收尾
@@ -238,6 +258,13 @@ class Session:
             self.tts = None
         await self._send({"type": "cancel_playback"})
         await self._set_state("listening")
+
+    # ---------- 语义结束（end_conversation）----------
+
+    async def request_end_conversation(self) -> None:
+        """由 end_conversation 工具调用：标记会话即将结束。
+        不立即关闭——等当前 TTS（告别语）播完后由 _on_tts_state 触发。"""
+        self._ending = True
 
     # ---------- 拍照（tool 交互）----------
 
