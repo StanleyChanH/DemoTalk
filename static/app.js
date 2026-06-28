@@ -14,7 +14,9 @@ const hintEl = $("#hint");
 const btnSettings = $("#btnSettings");
 const btnCloseSettings = $("#btnCloseSettings");
 const settingsPanel = $("#settingsPanel");
-const toggleRows = settingsPanel.querySelectorAll(".toggle-row");
+const toggleRows = settingsPanel.querySelectorAll(".toggle-row:not(.slider-row)");
+const vadRangeEl = $("#vadRange");
+const vadRangeValEl = $("#vadRangeVal");
 
 // ---- 状态 ----
 let ws = null;
@@ -39,13 +41,14 @@ let endingByVoice = false;
 // ---- 功能开关（中断 / MCP / 语义结束）----
 const FLAG_KEYS = ["barge_in", "mcp", "end_by_voice"];
 const LS_KEY = "demotalk.flags";
-let flags = { barge_in: true, mcp: true, end_by_voice: true };
+let flags = { barge_in: true, mcp: true, end_by_voice: true, vad_sensitivity: 50 };
 let mcpAvailable = true;
 
 function loadFlags() {
   try {
     const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
     for (const k of FLAG_KEYS) if (typeof saved[k] === "boolean") flags[k] = saved[k];
+    if (typeof saved.vad_sensitivity === "number") flags.vad_sensitivity = saved.vad_sensitivity;
   } catch (e) { /* 损坏则忽略，用默认 */ }
 }
 function saveFlags() {
@@ -285,6 +288,33 @@ function connect() {
   ws.onerror = () => { setHint("连接出错"); };
 }
 
+// ---- VAD 灵敏度映射 ----
+// s: 0-100，越大越灵敏 → silero 三阈值
+function sensitivityToVadOpts(s) {
+  const t = Math.max(0, Math.min(100, s)) / 100;
+  const positive = 0.75 - 0.45 * t;                  // s=0→0.75（迟钝），s=100→0.30（灵敏）
+  const negative = Math.max(0.10, positive - 0.15);  // 滞后防抖
+  const minSpeechMs = Math.round(600 - 450 * t);     // s=0→600（严格），s=100→150（宽松）
+  return { positiveSpeechThreshold: positive, negativeSpeechThreshold: negative, minSpeechMs };
+}
+
+function renderVadSlider() {
+  const v = Math.round(flags.vad_sensitivity);
+  if (vadRangeEl) vadRangeEl.value = v;
+  if (vadRangeValEl) vadRangeValEl.textContent = v;
+}
+
+// VAD 实例由 Task 4 创建；此前 applyVadSensitivity 仅更新 cap，接入后 setOptions 才生效
+let vadInstance = null;
+let vadPreRollCap = 8;  // 候选期头音缓冲容量（帧），按 minSpeechMs 动态更新（silero 每帧≈32ms）
+function applyVadSensitivity() {
+  const opts = sensitivityToVadOpts(flags.vad_sensitivity);
+  vadPreRollCap = Math.max(1, Math.ceil(opts.minSpeechMs / 32));
+  if (vadInstance) {
+    try { vadInstance.setOptions(opts); } catch (e) {}
+  }
+}
+
 function renderToggles() {
   toggleRows.forEach((row) => {
     const key = row.dataset.flag;
@@ -313,7 +343,12 @@ function applyDefaults(defaults) {
     else if (typeof defaults[k] === "boolean") flags[k] = defaults[k];
   }
   mcpAvailable = defaults.mcp_available !== false;
+  // vad_sensitivity：localStorage > .env 默认
+  if (typeof saved.vad_sensitivity === "number") flags.vad_sensitivity = saved.vad_sensitivity;
+  else if (typeof defaults.vad_sensitivity === "number") flags.vad_sensitivity = defaults.vad_sensitivity;
   renderToggles();
+  renderVadSlider();
+  applyVadSensitivity();
   sendFlags(); // 连接后立即把会话对齐到用户选择
 }
 
@@ -528,6 +563,18 @@ toggleRows.forEach((row) => {
   });
 });
 
+if (vadRangeEl) {
+  vadRangeEl.addEventListener("input", () => {
+    flags.vad_sensitivity = Number(vadRangeEl.value);
+    saveFlags();
+    renderVadSlider();
+    applyVadSensitivity();
+  });
+  // 阻止滑块拖动冒泡触发「面板外点击关闭」
+  vadRangeEl.addEventListener("click", (e) => e.stopPropagation());
+}
+
 // 初始渲染（未连接时也显示开关，供用户预先设置）
 loadFlags();
 renderToggles();
+renderVadSlider();
