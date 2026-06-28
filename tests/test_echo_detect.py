@@ -178,10 +178,12 @@ async def test_is_echo_false_when_user_says_different():
 
 
 async def test_is_echo_concatenated_multi_sentence():
-    """回声把多句连成一整段转写时，靠整体拼接比对命中。"""
+    """回声把多句连成一整段转写时，靠整体拼接比对命中。
+    3 句短 ref：任一单句（2字）与 input（6字）ratio=2*2/(2+6)=0.5 < 阈值，
+    仅整体拼接（6字 vs 6字）=1.0 命中，从而真正隔离 join 路径。"""
     s, _ = _make_session()
     s.state = "speaking"
-    s._echo_ref = ["你好。", "我是助手。"]
+    s._echo_ref = ["你好。", "我是。", "助手。"]
     assert s._is_echo("你好我是助手") is True
 
 
