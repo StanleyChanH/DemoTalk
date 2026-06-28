@@ -499,6 +499,7 @@ setState("idle");
 // ---- 设置面板交互 ----
 function toggleSettings(open) {
   settingsPanel.classList.toggle("hidden", !open);
+  if (open) btnCloseSettings.focus();
 }
 btnSettings.addEventListener("click", (e) => { e.stopPropagation(); toggleSettings(settingsPanel.classList.contains("hidden")); });
 btnCloseSettings.addEventListener("click", () => toggleSettings(false));
@@ -507,12 +508,21 @@ document.addEventListener("click", (e) => {
     toggleSettings(false);
   }
 });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsPanel.classList.contains("hidden")) toggleSettings(false);
+});
 toggleRows.forEach((row) => {
   row.querySelector(".switch").addEventListener("click", (e) => {
     e.stopPropagation();
     const sw = e.currentTarget;
     if (sw.disabled) return;
     setFlag(row.dataset.flag, !(sw.getAttribute("aria-checked") === "true"));
+  });
+  row.querySelector(".switch").addEventListener("keydown", (e) => {
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      e.currentTarget.click();
+    }
   });
 });
 
