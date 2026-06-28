@@ -136,3 +136,58 @@ async def test_run_turn_echo_ref_includes_trailing_buffer(monkeypatch):
 
     assert "完整一句。" in s._echo_ref
     assert "还有残片" in s._echo_ref
+
+
+# ---- _is_echo 各情形 ----
+
+async def test_is_echo_true_when_similar_during_speaking():
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = ["你好，我是语音助手。"]
+    assert s._is_echo("你好我是语音助手") is True  # 高度相似
+
+
+async def test_is_echo_false_when_listening_no_hangover():
+    s, _ = _make_session()
+    s.state = "listening"
+    s._speaking_ended_at = 0.0  # 不在 hangover
+    s._echo_ref = ["你好，我是语音助手。"]
+    assert s._is_echo("你好我是语音助手") is False
+
+
+async def test_is_echo_true_in_hangover():
+    s, _ = _make_session()
+    s.state = "listening"
+    s._speaking_ended_at = time.monotonic()  # hangover 内
+    s._echo_ref = ["你好，我是语音助手。"]
+    assert s._is_echo("你好我是语音助手") is True
+
+
+async def test_is_echo_false_when_ref_empty():
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = []  # 首轮无参考
+    assert s._is_echo("随便说点什么") is False
+
+
+async def test_is_echo_false_when_user_says_different():
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = ["今天天气真好。"]
+    assert s._is_echo("帮我订个闹钟") is False  # 内容不同
+
+
+async def test_is_echo_concatenated_multi_sentence():
+    """回声把多句连成一整段转写时，靠整体拼接比对命中。"""
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = ["你好。", "我是助手。"]
+    assert s._is_echo("你好我是助手") is True
+
+
+async def test_is_echo_respects_disable_switch(monkeypatch):
+    monkeypatch.setattr("app.config.ENABLE_ECHO_DETECT", False)
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = ["你好。"]
+    assert s._is_echo("你好") is False

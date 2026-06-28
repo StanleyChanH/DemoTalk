@@ -439,6 +439,26 @@ class Session:
             return False
         return (time.monotonic() - self._speaking_ended_at) * 1000 < config.ECHO_HANGOVER_MS
 
+    def _is_echo(self, text: str) -> bool:
+        """判断 STT final 是否为助手播报的回声：仅在 speaking 或 hangover 窗口内，
+        且与最近一轮 TTS 参考文本（逐句 + 整体拼接）相似度超阈值时为 True。"""
+        if not config.ENABLE_ECHO_DETECT:
+            return False
+        if self.state != "speaking" and not self._in_echo_hangover():
+            return False
+        if not self._echo_ref:
+            return False
+        norm = _echo_normalize(text)
+        if not norm:
+            return False
+        # 逐句 + 整体拼接都比对，覆盖「回声把多句连成一段转写」
+        refs = list(self._echo_ref) + ["".join(self._echo_ref)]
+        for r in refs:
+            rn = _echo_normalize(r)
+            if rn and _echo_similarity(norm, rn) >= config.ECHO_SIMILARITY_THRESHOLD:
+                return True
+        return False
+
     async def _send(self, obj: dict) -> None:
         if not self._running:
             return
