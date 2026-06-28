@@ -1,5 +1,4 @@
 import asyncio
-import json
 from unittest.mock import AsyncMock, MagicMock
 
 from app.session import Session
@@ -10,7 +9,7 @@ def _make_session():
     ws.send_text = AsyncMock()
     ws.send_bytes = AsyncMock()
     ws.close = AsyncMock()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     s = Session(ws, loop)
     s._running = True
     return s
@@ -77,6 +76,76 @@ async def test_on_final_ignored_when_ending(monkeypatch):
     assert s._current_turn == 0
     assert s._turn_task is None
     s.ws.send_text.assert_not_called()  # 连 user_final 都没发
+
+
+async def test_run_turn_ends_without_farewell_triggers_close(monkeypatch):
+    """无告别语（LLM 只调 end_conversation 无文本）时：不依赖 tts_end，直接同步触发关闭。"""
+    _stub_tts(monkeypatch)
+    monkeypatch.setattr("app.config.ENABLE_END_BY_VOICE", True)
+    s = _make_session()
+    s._current_turn = 1
+
+    end_tool_call = {"id": "call_e", "function": {"name": "end_conversation", "arguments": "{}"}}
+
+    async def fake_astream_once(tools=None):
+        s.llm._history.append({"role": "assistant", "content": "", "tool_calls": [end_tool_call]})
+        yield {"type": "done", "tool_calls": [end_tool_call], "finish_reason": "tool_calls"}
+
+    s.llm.astream_once = fake_astream_once
+    s.llm.add_user = lambda t: None
+    s.llm.add_tool = lambda cid, c: None
+
+    closed = {"n": 0}
+
+    async def spy_close():
+        closed["n"] += 1
+
+    s._end_conversation_close = spy_close
+
+    await s._run_turn("拜拜", turn=1)
+
+    assert s._ending is True
+    assert closed["n"] == 1  # 无告别语也触发了关闭，未死锁
+
+
+async def test_run_turn_take_photo_then_end_same_turn(monkeypatch):
+    """同轮 take_photo + end_conversation：顺序执行后 _ending=True，只调一次 LLM。"""
+    _stub_tts(monkeypatch)
+    monkeypatch.setattr("app.config.ENABLE_END_BY_VOICE", True)
+    monkeypatch.setattr("app.config.ENABLE_VISION", True)
+    s = _make_session()
+    s._current_turn = 1
+
+    calls = {"n": 0, "photo": 0}
+    tc_photo = {"id": "call_p", "function": {"name": "take_photo", "arguments": "{}"}}
+    tc_end = {"id": "call_e", "function": {"name": "end_conversation", "arguments": "{}"}}
+
+    async def fake_astream_once(tools=None):
+        calls["n"] += 1
+        s.llm._history.append({"role": "assistant", "content": "", "tool_calls": [tc_photo, tc_end]})
+        yield {"type": "done", "tool_calls": [tc_photo, tc_end], "finish_reason": "tool_calls"}
+
+    s.llm.astream_once = fake_astream_once
+    s.llm.add_user = lambda t: None
+    s.llm.add_tool = lambda cid, c: None
+
+    async def fake_request_photo(call_id):
+        calls["photo"] += 1
+        return "data:image/jpeg;base64,X"
+
+    s.request_photo = fake_request_photo
+
+    # 关闭动作可能被触发（无文本），mock 掉避免 create_task
+    async def noop_close():
+        pass
+
+    s._end_conversation_close = noop_close
+
+    await s._run_turn("看下这个，然后再见", turn=1)
+
+    assert calls["n"] == 1
+    assert calls["photo"] == 1  # take_photo 执行了
+    assert s._ending is True    # end_conversation 触发了
 
 
 def test_registers_end_conversation_when_enabled(monkeypatch):
@@ -175,7 +244,7 @@ async def test_shutdown_cancels_end_fallback(monkeypatch):
     # shutdown() 会调 stt.stop（可能阻塞），替换为 no-op 保证测试稳定
     s.stt.stop = lambda: None
     # 用一个真实的长 sleep task 模拟已调度的兜底任务
-    s._end_fallback = asyncio.get_event_loop().create_task(asyncio.sleep(100.0))
+    s._end_fallback = asyncio.get_running_loop().create_task(asyncio.sleep(100.0))
     assert not s._end_fallback.done()
 
     await s.shutdown()

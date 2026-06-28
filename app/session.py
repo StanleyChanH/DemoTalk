@@ -184,6 +184,7 @@ class Session:
             self.llm.add_user(user_text)
             tools = self.tool_registry.schemas() or None
 
+            fed_any = False  # 本轮是否喂过 TTS 文本（决定是否会有 tts_end）
             for _ in range(config.MAX_TOOL_CALLS_PER_TURN):
                 buffer = ""
                 tool_calls: list[dict] = []
@@ -203,6 +204,7 @@ class Session:
                             buffer = buffer[m.end():]
                             if active():
                                 tts.feed(sentence)
+                                fed_any = True
                     elif event["type"] == "done":
                         tool_calls = event.get("tool_calls", [])
                 if not active():
@@ -210,6 +212,7 @@ class Session:
                     return
                 if buffer.strip() and active():
                     tts.feed(buffer)
+                    fed_any = True
                 if not tool_calls:
                     if active():
                         tts.finish()
@@ -244,6 +247,10 @@ class Session:
                 if self._ending:
                     if active():
                         tts.finish()
+                        if not fed_any:
+                            # 无告别语音频：TTS 不会触发 tts_end，直接同步收尾，避免死锁
+                            await self._send({"type": "tts_end"})
+                            await self._end_conversation_close()
                     break
                 # 带 tool 结果进入下一轮 astream_once
             else:
@@ -275,6 +282,12 @@ class Session:
         """由 end_conversation 工具调用：标记会话即将结束。
         不立即关闭——等当前 TTS（告别语）播完后由 _on_tts_state 触发。"""
         self._ending = True
+
+    async def _end_conversation_close(self) -> None:
+        """语义结束的实际关闭动作：通知前端 + 兜底强制关闭。
+        由 tts_end（有告别语）或 _run_turn 结束分支（无告别语）触发。"""
+        await self._send({"type": "conversation_end"})
+        self._end_fallback = asyncio.create_task(self._force_close_after(30.0))
 
     async def _force_close_after(self, delay: float) -> None:
         """兜底：delay 秒后若会话仍存活，主动关闭 WS（防前端未关）。"""
@@ -335,15 +348,16 @@ class Session:
         elif event == "tts_end":
             await self._send({"type": "tts_end"})
             if self._ending:
-                # 告别语已播完：通知前端收尾 + 兜底强制关闭
-                await self._send({"type": "conversation_end"})
-                self._end_fallback = asyncio.create_task(self._force_close_after(30.0))
+                await self._end_conversation_close()
             else:
                 await self._set_state("listening")
         elif event == "tts_error":
             await self._send({"type": "error", "message": "语音合成失败"})
-            await self._send({"type": "tts_end"})  # 仍通知前端收尾（flush 打字机）
-            await self._set_state("listening")
+            await self._send({"type": "tts_end"})  # 通知前端收尾（flush 打字机）
+            if self._ending:
+                await self._end_conversation_close()
+            else:
+                await self._set_state("listening")
 
     # ---------- 辅助 ----------
 
