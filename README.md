@@ -77,6 +77,9 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `MAX_SENTENCE_SILENCE` | `800` | STT 句尾静音毫秒，越小越快判定说完（200–6000） |
 | `ENABLE_BARGE_IN` | `true` | 是否允许打断 |
 | `VAD_SENSITIVITY` | `50` | 前端语音门控灵敏度 0-100，越大越易触发（背景噪声多则调低） |
+| `ENABLE_ECHO_DETECT` | `true` | 回声检测总开关（外放自循环防护） |
+| `ECHO_SIMILARITY_THRESHOLD` | `0.6` | 回声相似度阈值 0-1，越低越激进判回声 |
+| `ECHO_HANGOVER_MS` | `1200` | speaking 结束后仍检测的窗口(毫秒) |
 | `ENABLE_VISION` | `true` | 是否启用视觉（take_photo 工具） |
 | `PHOTO_MAX_SIZE` | `640` | 拍照最长边像素 |
 | `PHOTO_QUALITY` | `0.8` | JPEG 质量 |
@@ -100,6 +103,15 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 灵敏度滑块（设置面板，0-100，默认取 `VAD_SENSITIVITY`）经 `vad.setOptions()` 实时生效，localStorage 记住上次选择。
 
 **能力边界：** VAD 能区分「人声 vs 非人声噪声」，但**无法区分说话人来源**——环境里的**其他人声**（旁人说话、电视/视频里的人声）仍可能被识别并上传。这是开放式麦克风的固有限制；如需彻底屏蔽环境人声，需引入按住说话（Push-to-Talk）或唤醒词（当前范围外）。
+
+### 回声检测（外放自循环防护）
+
+外放使用时，助手 TTS 的合成人声会被麦克风收回去（浏览器自带 AEC 对 TTS 外放效果有限），前端 VAD 又分不清「是助手在说还是用户在说」，导致回声被转写、助手对着自己的回声「自言自语」自循环。
+
+后端做**文本级回声检测**：`_on_final` 下发前，若处于 speaking 期间或说完后 1.2s 内，且 STT 转写与最近一轮 TTS 文本相似度 ≥ 阈值，判为回声丢弃——不发用户消息、不触发 barge-in、不开新一轮。真用户说的话内容不同，正常通过，**语音 barge-in 完整保留**。前端另在 speaking 期间隐藏 partial 字幕，消除回声转写的闪烁。
+
+- `ENABLE_ECHO_DETECT=false` 可关闭；`ECHO_SIMILARITY_THRESHOLD` 调相似度松紧；`ECHO_HANGOVER_MS` 调说完后的检测窗口。
+- **能力边界**：文本级方案，对 ASR 把回声严重错识成无关文字的极端情况会漏判（概率低，且有浏览器 AEC + 前端 VAD 前置挡一部分）。**根治回声的最优解是戴耳机**（扬声器声音物理上进不了麦克风）。
 
 ### 关于 TTS 模型（重要）
 

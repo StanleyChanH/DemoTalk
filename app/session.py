@@ -11,9 +11,11 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import json
 import logging
 import re
+import time
 
 from fastapi import WebSocket
 
@@ -28,6 +30,22 @@ log = logging.getLogger("demotalk.session")
 
 # 句子结束符：中英文标点 + 换行。用于把 LLM 增量切成可立即合成的小段
 _SENTENCE_END = re.compile(r"[。！？!?；;\n]")
+
+# 回声检测：文本归一化（去标点/空格/符号，转小写；保留中文与字母数字）
+_ECHO_STRIP = re.compile(r"\W+", re.UNICODE)
+
+
+def _echo_normalize(s: str) -> str:
+    r"""归一化用于回声比对：去掉标点/空格/符号，转小写。Python3 默认 re.UNICODE 下
+    \W = 非字母数字下划线（含中英文标点、空格），中文字符属于 \w 故保留。"""
+    return _ECHO_STRIP.sub("", s).lower()
+
+
+def _echo_similarity(a: str, b: str) -> float:
+    """两个已归一化字符串的相似度（difflib 最长连续匹配比例，0-1）。"""
+    if not a or not b:
+        return 0.0
+    return difflib.SequenceMatcher(None, a, b).ratio()
 
 
 class Session:
@@ -67,6 +85,9 @@ class Session:
         self._ending = False
         # 兜底强制关闭 WS 的延时任务
         self._end_fallback: asyncio.Task | None = None
+        # 回声检测：最近一轮喂给 TTS 的句子（比对参考）；speaking 结束时刻（hangover 窗口）
+        self._echo_ref: list[str] = []
+        self._speaking_ended_at: float = 0.0
 
     # ---------- 生命周期 ----------
 
@@ -192,6 +213,13 @@ class Session:
         text = text.strip()
         if not text:
             return
+
+        # 回声检测：speaking 期间或 hangover 内，疑似助手播报的回声则丢弃，
+        # 不发 user_final、不 barge-in、不开新一轮（真用户声内容不同会通过）
+        if self._is_echo(text):
+            log.info("回声检测：丢弃疑似回声输入「%s」", text)
+            return
+
         await self._send({"type": "user_final", "text": text})
 
         if self.state == "speaking":
@@ -211,6 +239,7 @@ class Session:
         tts: TTSService | None = None
         try:
             await self._set_state("thinking")
+            self._echo_ref = []  # 本轮重建回声参考
             tts = TTSService(
                 on_audio=self._on_tts_audio,
                 on_state=self._on_tts_state,
@@ -245,6 +274,7 @@ class Session:
                             buffer = buffer[m.end():]
                             if active():
                                 tts.feed(sentence)
+                                self._echo_ref.append(sentence)
                                 fed_any = True
                     elif event["type"] == "done":
                         tool_calls = event.get("tool_calls", [])
@@ -253,6 +283,7 @@ class Session:
                     return
                 if buffer.strip() and active():
                     tts.feed(buffer)
+                    self._echo_ref.append(buffer)
                     fed_any = True
                 if not tool_calls:
                     if active():
@@ -403,8 +434,37 @@ class Session:
     # ---------- 辅助 ----------
 
     async def _set_state(self, state: str) -> None:
+        if self.state == "speaking" and state != "speaking":
+            # 离开 speaking：记录时刻，供回声检测 hangover 窗口使用
+            self._speaking_ended_at = time.monotonic()
         self.state = state
         await self._send({"type": "state", "state": state})
+
+    def _in_echo_hangover(self) -> bool:
+        """speaking 结束后是否仍处于回声 hangover 窗口内（覆盖扬声器尾音/混响产生的回声 final）。"""
+        if self._speaking_ended_at == 0.0:
+            return False
+        return (time.monotonic() - self._speaking_ended_at) * 1000 < config.ECHO_HANGOVER_MS
+
+    def _is_echo(self, text: str) -> bool:
+        """判断 STT final 是否为助手播报的回声：仅在 speaking 或 hangover 窗口内，
+        且与最近一轮 TTS 参考文本（逐句 + 整体拼接）相似度超阈值时为 True。"""
+        if not config.ENABLE_ECHO_DETECT:
+            return False
+        if self.state != "speaking" and not self._in_echo_hangover():
+            return False
+        if not self._echo_ref:
+            return False
+        norm = _echo_normalize(text)
+        if not norm:
+            return False
+        # 逐句 + 整体拼接都比对，覆盖「回声把多句连成一段转写」
+        refs = list(self._echo_ref) + ["".join(self._echo_ref)]
+        for r in refs:
+            rn = _echo_normalize(r)
+            if rn and _echo_similarity(norm, rn) >= config.ECHO_SIMILARITY_THRESHOLD:
+                return True
+        return False
 
     async def _send(self, obj: dict) -> None:
         if not self._running:

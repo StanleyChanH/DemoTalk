@@ -35,6 +35,7 @@ let photoQuality = 0.8;
 
 // ---- VAD（语音活动检测）运行态 ----
 let vadSending = false;      // onSpeechRealStart→true / onSpeechEnd→false
+let suppressPartial = false;   // speaking 期间隐藏 partial，避免回声转写在字幕区闪烁
 let vadPreRoll = [];         // 候选期头音缓冲（onSpeechRealStart 时 flush；misfire 时丢弃）
 const vadIndicatorEl = $("#vadIndicator");
 
@@ -283,6 +284,7 @@ function connect() {
   ws.onclose = () => {
     setConn(false);
     endingByVoice = false;  // 连接关闭：清除语音结束标志，防跨会话泄漏
+    suppressPartial = false;  // 连接关闭：清除 partial 抑制标志，防跨会话泄漏
     setState("idle");
     stopAV();
     stopPlayback();
@@ -433,9 +435,17 @@ function handleEvent(obj) {
       break;
     case "state":
       setState(obj.state);
+      // speaking 期间隐藏 partial（回声会被 STT 短暂转写，避免字幕闪烁）；
+      // 切回 listening/thinking 恢复显示
+      if (obj.state === "speaking") {
+        suppressPartial = true;
+        partialEl.textContent = "";
+      } else {
+        suppressPartial = false;
+      }
       break;
     case "partial":
-      partialEl.textContent = obj.text || "";
+      if (!suppressPartial) partialEl.textContent = obj.text || "";
       break;
     case "user_final":
       partialEl.textContent = "";
@@ -586,6 +596,7 @@ async function startSession() {
   btnStart.disabled = true;
   setHint("");
   endingByVoice = false;  // 新会话开始：清除上次语音结束的遗留标志
+  suppressPartial = false;  // 新会话开始：清除 partial 抑制的遗留标志
   try {
     connect();
     // 等待 WS 打开
