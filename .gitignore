@@ -32,3 +32,6 @@ Thumbs.db
 docs/*
 !docs/superpowers/
 !docs/superpowers/**
+
+# Visual Companion brainstorm mockups
+.superpowers/

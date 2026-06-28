@@ -4,15 +4,22 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>DemoTalk · 实时语音助手</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600;9..144,700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
   <div class="app">
     <header class="topbar">
       <div class="brand">
-        <span class="dot"></span>
-        <h1>DemoTalk</h1>
-        <span class="sub">实时低延迟语音助手 · 百炼 STT / LLM / TTS</span>
+        <span class="brand-mark" aria-hidden="true">
+          <span class="mark-core"></span>
+        </span>
+        <div class="brand-text">
+          <h1 class="brand-name">DemoTalk</h1>
+          <span class="brand-sub">实时语音助手 · 百炼 STT / LLM / TTS</span>
+        </div>
       </div>
       <div class="status">
         <span id="connPill" class="pill pill-muted">未连接</span>
@@ -20,25 +27,49 @@
       </div>
     </header>
 
-    <main id="transcript" class="transcript">
-      <div class="hint" id="welcome">
-        点击「开始对话」，允许麦克风权限后即可开口交谈。<br />
-        助手会实时转写你的话、流式生成回答（打字机效果）并语音播报。
-      </div>
-    </main>
+    <div class="stage">
+      <!-- 左：聊天 -->
+      <section class="chat-col panel">
+        <main id="transcript" class="transcript">
+          <div class="hint" id="welcome">
+            <span class="hint-eyebrow">开始对话</span>
+            点击下方「开始对话」，允许麦克风权限后即可开口交谈。<br />
+            助手会实时转写你的话、流式生成回答（打字机效果）并语音播报。
+          </div>
+        </main>
+        <div id="partial" class="partial" aria-live="polite"></div>
+      </section>
 
-    <div id="partial" class="partial" aria-live="polite"></div>
+      <!-- 右：摄像头（助手的眼睛） -->
+      <aside class="cam-col">
+        <div class="cam-stage">
+          <div class="cam-placeholder">
+            <div class="reticle" aria-hidden="true">
+              <span></span><span></span><span></span>
+            </div>
+            <p class="cam-wait-line">摄像头待机</p>
+            <p class="cam-wait-sub">开始对话后，这里会成为助手的眼睛</p>
+          </div>
+          <video id="camView" class="hidden" autoplay muted playsinline></video>
+          <span class="corner tl"></span>
+          <span class="corner tr"></span>
+          <span class="corner bl"></span>
+          <span class="corner br"></span>
+          <div class="cam-badge">取景中</div>
+        </div>
+      </aside>
+    </div>
 
     <footer class="controls">
-      <button id="btnStart" class="btn btn-primary">开始对话</button>
+      <button id="btnStart" class="btn btn-primary">
+        <span class="btn-dot"></span>开始对话
+      </button>
       <button id="btnStop" class="btn btn-ghost" disabled>结束对话</button>
       <span id="hint" class="hint-small"></span>
     </footer>
   </div>
 
-  <video id="camView" class="hidden" autoplay muted playsinline></video>
   <div id="flash"></div>
-
   <script src="/static/app.js"></script>
 </body>
 </html>
