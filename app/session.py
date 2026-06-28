@@ -15,6 +15,7 @@ import difflib
 import json
 import logging
 import re
+import time
 
 from fastapi import WebSocket
 
@@ -84,6 +85,9 @@ class Session:
         self._ending = False
         # 兜底强制关闭 WS 的延时任务
         self._end_fallback: asyncio.Task | None = None
+        # 回声检测：最近一轮喂给 TTS 的句子（比对参考）；speaking 结束时刻（hangover 窗口）
+        self._echo_ref: list[str] = []
+        self._speaking_ended_at: float = 0.0
 
     # ---------- 生命周期 ----------
 
@@ -420,8 +424,17 @@ class Session:
     # ---------- 辅助 ----------
 
     async def _set_state(self, state: str) -> None:
+        if self.state == "speaking" and state != "speaking":
+            # 离开 speaking：记录时刻，供回声检测 hangover 窗口使用
+            self._speaking_ended_at = time.monotonic()
         self.state = state
         await self._send({"type": "state", "state": state})
+
+    def _in_echo_hangover(self) -> bool:
+        """speaking 结束后是否仍处于回声 hangover 窗口内（覆盖扬声器尾音/混响产生的回声 final）。"""
+        if self._speaking_ended_at == 0.0:
+            return False
+        return (time.monotonic() - self._speaking_ended_at) * 1000 < config.ECHO_HANGOVER_MS
 
     async def _send(self, obj: dict) -> None:
         if not self._running:

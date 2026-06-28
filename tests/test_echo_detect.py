@@ -33,3 +33,42 @@ def test_echo_similarity_high_overlap():
 def test_echo_similarity_empty_returns_zero():
     assert _echo_similarity("", "abc") == 0.0
     assert _echo_similarity("abc", "") == 0.0
+
+
+def _make_session():
+    ws = MagicMock()
+    ws.send_text = AsyncMock()
+    ws.send_bytes = AsyncMock()
+    ws.close = AsyncMock()
+    loop = asyncio.get_running_loop()
+    s = Session(ws, loop)
+    s._running = True
+    return s, ws
+
+
+async def test_in_echo_hangover_false_initially():
+    s, _ = _make_session()
+    assert s._in_echo_hangover() is False
+    assert s._speaking_ended_at == 0.0
+
+
+async def test_in_echo_hangover_true_within_window():
+    s, _ = _make_session()
+    s._speaking_ended_at = time.monotonic()  # 刚结束 speaking
+    assert s._in_echo_hangover() is True
+
+
+async def test_in_echo_hangover_false_after_window():
+    s, _ = _make_session()
+    # 超过 hangover 窗口
+    s._speaking_ended_at = time.monotonic() - (config.ECHO_HANGOVER_MS / 1000) - 0.1
+    assert s._in_echo_hangover() is False
+
+
+async def test_set_state_records_speaking_end_timestamp():
+    s, _ = _make_session()
+    assert s._speaking_ended_at == 0.0
+    await s._set_state("speaking")
+    assert s._speaking_ended_at == 0.0  # 进入 speaking 不记录
+    await s._set_state("listening")
+    assert s._speaking_ended_at != 0.0  # 离开 speaking 才记录
