@@ -93,7 +93,9 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ### 语音门控（VAD）
 
-前端接入 Silero VAD（`@ricky0123/vad-web`）：只有检测到**人声**的麦克风帧才上传给 ASR，静音与非人声噪声（键盘、咳嗽、电视音乐、风声等）被丢弃，显著降低背景噪声对对话的干扰。模型本地托管（`static/vad/`），离线可用；库初始化失败时自动回退到无门控直传。
+前端接入 Silero VAD（`@ricky0123/vad-web`）：只有检测到**人声**的麦克风帧才上传给 ASR，静音与非人声噪声（键盘、咳嗽、电视音乐、风声等）被丢弃，显著降低背景噪声对对话的干扰。Silero ONNX 模型与 onnxruntime WASM 本地托管于 `static/vad/`；库 JS 走 jsdelivr CDN（**首次加载需联网**，之后浏览器缓存）。库初始化失败时自动回退到无门控直传。
+
+> **首次加载延迟**：首次「开始对话」需下载并编译 ort WASM（~11MB），冷启动约 30-60 秒；浏览器缓存后，后续会话几乎无感。
 
 灵敏度滑块（设置面板，0-100，默认取 `VAD_SENSITIVITY`）经 `vad.setOptions()` 实时生效，localStorage 记住上次选择。
 
@@ -131,7 +133,8 @@ DemoTalk/
 └── static/
     ├── index.html          # 界面
     ├── style.css           # 样式
-    └── app.js              # 麦克风/打字机/播放/WS 逻辑
+    ├── app.js              # 麦克风/VAD 门控/打字机/播放/WS 逻辑
+    └── vad/                # Silero VAD 本地资源（onnx 模型 + ort wasm + worklet bundle）
 ```
 
 ## 视觉能力（摄像头）
