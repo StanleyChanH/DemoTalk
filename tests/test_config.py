@@ -12,3 +12,7 @@ def test_vision_defaults():
 def test_mcp_defaults():
     assert config.ENABLE_MCP is True
     assert config.MCP_CONFIG_FILE == "mcp.json"
+
+
+def test_end_by_voice_defaults():
+    assert config.ENABLE_END_BY_VOICE is True

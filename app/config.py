@@ -53,7 +53,7 @@ TTS_SAMPLE_RATE: int = _int("TTS_SAMPLE_RATE", 24000)
 # ---- LLM ----
 LLM_SYSTEM_PROMPT: str = _get(
     "LLM_SYSTEM_PROMPT",
-    "你是一个简洁友好的中文语音助手。请用 1-2 句话简短回答，口语化、适合语音播报，不要使用 markdown 或列表。当需要看用户周围画面时（例如用户问『这是什么』『前面有什么』），先调用 take_photo 拍照再回答。",
+    "你是一个简洁友好的中文语音助手。请用 1-2 句话简短回答，口语化、适合语音播报，不要使用 markdown 或列表。当需要看用户周围画面时（例如用户问『这是什么』『前面有什么』），先调用 take_photo 拍照再回答。当用户明确表达结束对话（如『再见／拜拜／结束对话／不聊了／先这样吧／挂了』）时，可先用一句话简短告别，并调用 end_conversation 工具结束对话；无明确结束意图时不要调用。",
 )
 LLM_TEMPERATURE: float = _float("LLM_TEMPERATURE", 0.7)
 LLM_BASE_URL: str = _get("LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1")
@@ -80,6 +80,8 @@ PHOTO_MAX_SIZE: int = _int("PHOTO_MAX_SIZE", 640)
 PHOTO_QUALITY: float = _float("PHOTO_QUALITY", 0.8)
 TAKE_PHOTO_TIMEOUT: int = _int("TAKE_PHOTO_TIMEOUT", 5)
 MAX_TOOL_CALLS_PER_TURN: int = _int("MAX_TOOL_CALLS_PER_TURN", 3)
+# 是否启用「语义结束对话」（用户说再见等由 LLM 调 end_conversation 工具结束）
+ENABLE_END_BY_VOICE: bool = _bool("ENABLE_END_BY_VOICE", True)
 
 # ---- MCP ----
 ENABLE_MCP: bool = _bool("ENABLE_MCP", True)
