@@ -1,4 +1,3 @@
-import pytest
 from app.tools.registry import ToolRegistry
 from app.tools.base import Tool, ToolContext, ToolResult
 
@@ -94,3 +93,20 @@ async def test_execute_unknown_tool():
     ctx = ToolContext(call_id="1", args={}, request_photo=_noop_photo)
     result = await r.execute("missing", ctx)
     assert "未知工具" in result.text
+
+
+class _BoomTool(Tool):
+    @property
+    def schema(self) -> dict:
+        return {"name": "boom", "description": "raises", "parameters": {"type": "object", "properties": {}}}
+
+    async def execute(self, ctx: ToolContext) -> ToolResult:
+        raise RuntimeError("boom")
+
+
+async def test_execute_swallows_exception():
+    r = ToolRegistry()
+    r.register(_BoomTool())
+    ctx = ToolContext(call_id="1", args={}, request_photo=_noop_photo)
+    result = await r.execute("boom", ctx)
+    assert "工具执行出错" in result.text
