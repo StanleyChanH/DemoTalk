@@ -28,11 +28,13 @@ class ToolResult:
 
 @dataclass
 class ToolContext:
-    """工具执行上下文。request_photo 由 session 注入（返回 data URL 或 None）。"""
+    """工具执行上下文。request_photo 由 session 注入（返回 data URL 或 None）。
+    request_end_conversation 可选，由 session 注入（仅 end_conversation 工具使用）。"""
 
     call_id: str
     args: dict
     request_photo: Callable[[str], Awaitable[str | None]]
+    request_end_conversation: Callable[[], Awaitable[None]] | None = None
 
 
 @runtime_checkable

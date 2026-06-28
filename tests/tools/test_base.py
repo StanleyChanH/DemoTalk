@@ -37,3 +37,23 @@ def test_tool_context_fields():
     assert ctx.call_id == "c1"
     assert ctx.args == {}
     assert callable(ctx.request_photo)
+
+
+def test_tool_context_end_conversation_optional_default():
+    # 不传 request_end_conversation 时默认 None（兼容 MCP 适配器等不使用的 tool）
+    ctx = ToolContext(call_id="c1", args={}, request_photo=lambda cid: None)
+    assert ctx.request_end_conversation is None
+
+
+async def test_tool_context_end_conversation_can_be_injected():
+    async def fake_end():
+        return None
+
+    ctx = ToolContext(
+        call_id="c1",
+        args={},
+        request_photo=lambda cid: None,
+        request_end_conversation=fake_end,
+    )
+    assert callable(ctx.request_end_conversation)
+    await ctx.request_end_conversation()  # 可 await
