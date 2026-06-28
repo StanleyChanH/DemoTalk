@@ -113,6 +113,8 @@ async def test_set_flags_mcp_toggle(monkeypatch):
     assert s.tool_registry.sources().get("mcp_x") == "mcp"
     await s.set_flags({"mcp": False})
     assert "mcp_x" not in s.tool_registry.sources()
+    await s.set_flags({"mcp": True})
+    assert s.tool_registry.sources().get("mcp_x") == "mcp"  # 重新开启恢复工具
 
 
 # ---- config_defaults 下发 ----

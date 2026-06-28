@@ -22,6 +22,7 @@ from .llm import LLMService
 from .mcp.manager import mcp_manager
 from .stt import STTService
 from .tts import TTSService
+from .tools.builtin.end_conversation import EndConversationTool
 
 log = logging.getLogger("demotalk.session")
 
@@ -43,7 +44,6 @@ class Session:
 
         from .tools.registry import ToolRegistry
         from .tools.builtin.take_photo import TakePhotoTool
-        from .tools.builtin.end_conversation import EndConversationTool
 
         self.tool_registry = ToolRegistry()
         if config.ENABLE_VISION:
@@ -162,7 +162,6 @@ class Session:
             want = bool(msg["end_by_voice"])
             has = self.tool_registry.get("end_conversation") is not None
             if want and not has:
-                from .tools.builtin.end_conversation import EndConversationTool
                 self.tool_registry.register(EndConversationTool())
             elif not want and has:
                 self.tool_registry.unregister("end_conversation")
