@@ -284,6 +284,7 @@ function connect() {
   ws.onclose = () => {
     setConn(false);
     endingByVoice = false;  // 连接关闭：清除语音结束标志，防跨会话泄漏
+    suppressPartial = false;  // 连接关闭：清除 partial 抑制标志，防跨会话泄漏
     setState("idle");
     stopAV();
     stopPlayback();
@@ -595,6 +596,7 @@ async function startSession() {
   btnStart.disabled = true;
   setHint("");
   endingByVoice = false;  // 新会话开始：清除上次语音结束的遗留标志
+  suppressPartial = false;  // 新会话开始：清除 partial 抑制的遗留标志
   try {
     connect();
     // 等待 WS 打开
