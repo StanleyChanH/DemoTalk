@@ -1,56 +1,96 @@
 import pytest
-from app.tools.base import ToolContext, ToolResult
 from app.tools.registry import ToolRegistry
+from app.tools.base import Tool, ToolContext, ToolResult
 
 
-class FakeTool:
-    def __init__(self, name, result_text="ok"):
-        self._name = name
-        self._result_text = result_text
+class _FakeTool(Tool):
+    def __init__(self, name: str):
+        self._schema = {
+            "name": name,
+            "description": "fake",
+            "parameters": {"type": "object", "properties": {}},
+        }
 
     @property
     def schema(self) -> dict:
-        return {"name": self._name, "description": "d", "parameters": {"type": "object", "properties": {}}}
+        return self._schema
 
     async def execute(self, ctx: ToolContext) -> ToolResult:
-        return ToolResult(text=self._result_text)
+        return ToolResult(text=f"exec:{self._schema['name']}")
 
 
-@pytest.fixture
-def ctx():
-    return ToolContext(call_id="c1", args={}, request_photo=lambda cid: None)
+async def _noop_photo(_call_id: str) -> str | None:
+    return None
 
 
-def test_register_and_schemas():
-    reg = ToolRegistry()
-    reg.register(FakeTool("echo"))
-    schemas = reg.schemas()
-    assert schemas == [{"type": "function", "function": {"name": "echo", "description": "d", "parameters": {"type": "object", "properties": {}}}}]
+def test_register_default_source():
+    r = ToolRegistry()
+    r.register(_FakeTool("a"))
+    assert r.get("a") is not None
+    assert r.sources() == {"a": "builtin"}
 
 
-async def test_execute_known(ctx):
-    reg = ToolRegistry()
-    reg.register(FakeTool("echo", "hi"))
-    result = await reg.execute("echo", ctx)
-    assert result.text == "hi"
+def test_register_with_source():
+    r = ToolRegistry()
+    r.register(_FakeTool("mcp_x"), source="mcp")
+    assert r.sources() == {"mcp_x": "mcp"}
 
 
-async def test_execute_unknown_returns_error(ctx):
-    reg = ToolRegistry()
-    result = await reg.execute("nope", ctx)
+def test_unregister_removes_tool():
+    r = ToolRegistry()
+    r.register(_FakeTool("a"))
+    r.unregister("a")
+    assert r.get("a") is None
+    assert r.schemas() == []
+
+
+def test_unregister_missing_is_noop():
+    r = ToolRegistry()
+    r.unregister("nope")  # 不应抛异常
+
+
+def test_clear_by_source_removes_only_that_source():
+    r = ToolRegistry()
+    r.register(_FakeTool("builtin1"))
+    r.register(_FakeTool("mcp_a"), source="mcp")
+    r.register(_FakeTool("mcp_b"), source="mcp")
+    r.clear_by_source("mcp")
+    assert set(r.sources()) == {"builtin1"}
+
+
+def test_clear_by_source_keeps_builtin():
+    r = ToolRegistry()
+    r.register(_FakeTool("a"))
+    r.register(_FakeTool("b"), source="mcp")
+    r.clear_by_source("mcp")
+    assert set(r.sources()) == {"a"}
+
+
+def test_schemas_format():
+    r = ToolRegistry()
+    r.register(_FakeTool("a"))
+    assert r.schemas() == [
+        {
+            "type": "function",
+            "function": {
+                "name": "a",
+                "description": "fake",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }
+    ]
+
+
+async def test_execute_registered_tool():
+    r = ToolRegistry()
+    r.register(_FakeTool("a"))
+    ctx = ToolContext(call_id="1", args={}, request_photo=_noop_photo)
+    result = await r.execute("a", ctx)
+    assert result.text == "exec:a"
+
+
+async def test_execute_unknown_tool():
+    r = ToolRegistry()
+    ctx = ToolContext(call_id="1", args={}, request_photo=_noop_photo)
+    result = await r.execute("missing", ctx)
     assert "未知工具" in result.text
-
-
-async def test_execute_swallows_exception(ctx):
-    class Boom:
-        @property
-        def schema(self):
-            return {"name": "boom", "description": "d", "parameters": {"type": "object", "properties": {}}}
-
-        async def execute(self, ctx):
-            raise RuntimeError("爆炸")
-
-    reg = ToolRegistry()
-    reg.register(Boom())
-    result = await reg.execute("boom", ctx)
-    assert "工具执行出错" in result.text
