@@ -232,6 +232,7 @@ class Session:
         tts: TTSService | None = None
         try:
             await self._set_state("thinking")
+            self._echo_ref = []  # 本轮重建回声参考
             tts = TTSService(
                 on_audio=self._on_tts_audio,
                 on_state=self._on_tts_state,
@@ -266,6 +267,7 @@ class Session:
                             buffer = buffer[m.end():]
                             if active():
                                 tts.feed(sentence)
+                                self._echo_ref.append(sentence)
                                 fed_any = True
                     elif event["type"] == "done":
                         tool_calls = event.get("tool_calls", [])
@@ -274,6 +276,7 @@ class Session:
                     return
                 if buffer.strip() and active():
                     tts.feed(buffer)
+                    self._echo_ref.append(buffer)
                     fed_any = True
                 if not tool_calls:
                     if active():

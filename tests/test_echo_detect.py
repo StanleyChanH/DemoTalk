@@ -72,3 +72,67 @@ async def test_set_state_records_speaking_end_timestamp():
     assert s._speaking_ended_at == 0.0  # 进入 speaking 不记录
     await s._set_state("listening")
     assert s._speaking_ended_at != 0.0  # 离开 speaking 才记录
+
+
+def _stub_tts(monkeypatch):
+    """用轻量 stub 替换 TTSService，避免真实网络/线程。"""
+    class _FakeTTS:
+        def __init__(self, *a, **kw):
+            pass
+
+        def start(self):
+            pass
+
+        def feed(self, text):
+            pass
+
+        def finish(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    monkeypatch.setattr("app.session.TTSService", _FakeTTS)
+
+
+async def test_run_turn_clears_and_populates_echo_ref(monkeypatch):
+    """_run_turn 开头清空上轮残留，并把喂给 TTS 的每个句子累积进 _echo_ref。"""
+    _stub_tts(monkeypatch)
+    s, _ = _make_session()
+    s._current_turn = 1
+    s._echo_ref = ["残留上轮内容"]  # 预置上轮残留，验证会被清空
+
+    async def fake_astream_once(tools=None):
+        s.llm._history.append({"role": "assistant", "content": "你好。我是助手。"})
+        yield {"type": "text", "text": "你好。我是助手。"}
+        yield {"type": "done", "tool_calls": [], "finish_reason": "stop"}
+
+    s.llm.astream_once = fake_astream_once
+    s.llm.add_user = lambda t: None
+    s.llm.add_tool = lambda cid, c: None
+
+    await s._run_turn("你好", turn=1)
+
+    assert "残留上轮内容" not in s._echo_ref  # 开头已清空
+    assert s._echo_ref == ["你好。", "我是助手。"]  # 按句号切分的两句
+
+
+async def test_run_turn_echo_ref_includes_trailing_buffer(monkeypatch):
+    """末尾无句号的 buffer 残片也应进 _echo_ref。"""
+    _stub_tts(monkeypatch)
+    s, _ = _make_session()
+    s._current_turn = 1
+
+    async def fake_astream_once(tools=None):
+        s.llm._history.append({"role": "assistant", "content": "完整一句。还有残片"})
+        yield {"type": "text", "text": "完整一句。还有残片"}
+        yield {"type": "done", "tool_calls": [], "finish_reason": "stop"}
+
+    s.llm.astream_once = fake_astream_once
+    s.llm.add_user = lambda t: None
+    s.llm.add_tool = lambda cid, c: None
+
+    await s._run_turn("继续", turn=1)
+
+    assert "完整一句。" in s._echo_ref
+    assert "还有残片" in s._echo_ref
