@@ -81,6 +81,7 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `PHOTO_QUALITY` | `0.8` | JPEG 质量 |
 | `TAKE_PHOTO_TIMEOUT` | `5` | 拍照超时(秒) |
 | `MAX_TOOL_CALLS_PER_TURN` | `3` | 每轮工具调用上限 |
+| `ENABLE_END_BY_VOICE` | `true` | 是否启用「语义结束」（说再见等由 LLM 调 `end_conversation` 结束） |
 | `ENABLE_MCP` | `true` | 是否启用 MCP（外部工具服务器） |
 | `MCP_CONFIG_FILE` | `mcp.json` | MCP 配置文件路径（mcpServers 格式） |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | 服务监听 |
@@ -107,7 +108,8 @@ DemoTalk/
 │   ├── tools/              # 通用 tool 框架（视觉 take_photo；将来 MCP/Skills 复用）
 │   │   ├── base.py         # ToolResult / ToolContext / Tool 协议
 │   │   ├── registry.py     # ToolRegistry 注册表
-│   │   └── builtin/take_photo.py
+│   │   ├── builtin/take_photo.py
+│   │   └── builtin/end_conversation.py
 │   └── mcp/                # MCP client（config/client/adapter/manager）
 │       ├── config.py       # 读 mcp.json
 │       ├── client.py       # McpClient SSE/stdio
@@ -165,4 +167,5 @@ DemoTalk 可作为 MCP client 连接外部 MCP server，把 server 的工具暴�
   - 二进制：麦克风 16kHz/16bit/单声道 PCM。
 - 服务端 → 客户端：
   - `tts_format` / `state` / `partial`（实时转写）/ `user_final` / `delta`（助手增量）/ `tts_start` / `tts_end` / `cancel_playback` / `error`；视觉相关：`take_photo`（要求拍照，含 `call_id`）/ `tool_running`（工具执行中，含 `tool` 名）/ `vision_config`（下发拍照参数）。
+  另有 `conversation_end`（语义结束：助手告别语播完后下发，前端据此在播放队列空时断连回初始态）。
   - 二进制：TTS 的 PCM（按 `tts_format` 解码）。
