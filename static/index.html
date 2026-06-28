@@ -22,6 +22,11 @@
         </div>
       </div>
       <div class="status">
+        <button id="btnSettings" class="icon-btn" aria-label="设置" title="设置">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" d="M12 8a4 4 0 1 0 0 8 4 4 0 0 0 0-8zm9.3 3.2-2.1-.5a7.8 7.8 0 0 0-.5-1.3l1.1-1.8a.6.6 0 0 0-.1-.8l-1.7-1.7a.6.6 0 0 0-.8-.1l-1.8 1.1a7.8 7.8 0 0 0-1.3-.5l-.5-2.1a.6.6 0 0 0-.6-.5h-2.4a.6.6 0 0 0-.6.5l-.5 2.1a7.8 7.8 0 0 0-1.3.5L7.7 4.3a.6.6 0 0 0-.8.1L5.2 6.1a.6.6 0 0 0-.1.8l1.1 1.8a7.8 7.8 0 0 0-.5 1.3l-2.1.5a.6.6 0 0 0-.5.6v2.4c0 .3.2.5.5.6l2.1.5c.1.5.3.9.5 1.3l-1.1 1.8c-.2.3-.1.6.1.8l1.7 1.7c.2.2.5.2.8.1l1.8-1.1c.4.2.8.4 1.3.5l.5 2.1c.1.3.3.5.6.5h2.4c.3 0 .5-.2.6-.5l.5-2.1c.5-.1.9-.3 1.3-.5l1.8 1.1c.3.2.6.1.8-.1l1.7-1.7c.2-.2.2-.5.1-.8l-1.1-1.8c.2-.4.4-.8.5-1.3l2.1-.5a.6.6 0 0 0 .5-.6v-2.4a.6.6 0 0 0-.4-.6z"/>
+          </svg>
+        </button>
         <span id="connPill" class="pill pill-muted">未连接</span>
         <span id="statePill" class="pill">待机</span>
       </div>
@@ -67,6 +72,35 @@
       <button id="btnStop" class="btn btn-ghost" disabled>结束对话</button>
       <span id="hint" class="hint-small"></span>
     </footer>
+  </div>
+
+  <div id="settingsPanel" class="settings-panel hidden" role="dialog" aria-label="设置">
+    <div class="settings-head">
+      <span>设置</span>
+      <button id="btnCloseSettings" class="icon-btn sm" aria-label="关闭">×</button>
+    </div>
+    <div class="toggle-row" data-flag="barge_in">
+      <div class="toggle-info">
+        <div class="toggle-label">允许打断</div>
+        <div class="toggle-desc">助手说话时你开口，立即停止并进入新一轮</div>
+      </div>
+      <button class="switch" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="toggle-row" data-flag="mcp">
+      <div class="toggle-info">
+        <div class="toggle-label">MCP 工具</div>
+        <div class="toggle-desc">允许助手调用外部工具服务器</div>
+      </div>
+      <button class="switch" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="toggle-row" data-flag="end_by_voice">
+      <div class="toggle-info">
+        <div class="toggle-label">语义结束</div>
+        <div class="toggle-desc">说「再见」等，由助手自动结束对话</div>
+      </div>
+      <button class="switch" role="switch" aria-checked="true"></button>
+    </div>
+    <div class="settings-foot">默认值来自 .env，切换后立即生效</div>
   </div>
 
   <div id="flash"></div>

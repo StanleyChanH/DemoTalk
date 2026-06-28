@@ -11,6 +11,10 @@ const connPill = $("#connPill");
 const btnStart = $("#btnStart");
 const btnStop = $("#btnStop");
 const hintEl = $("#hint");
+const btnSettings = $("#btnSettings");
+const btnCloseSettings = $("#btnCloseSettings");
+const settingsPanel = $("#settingsPanel");
+const toggleRows = settingsPanel.querySelectorAll(".toggle-row");
 
 // ---- 状态 ----
 let ws = null;
@@ -31,6 +35,22 @@ let photoQuality = 0.8;
 let nextStart = 0;
 let sources = [];
 let endingByVoice = false;
+
+// ---- 功能开关（中断 / MCP / 语义结束）----
+const FLAG_KEYS = ["barge_in", "mcp", "end_by_voice"];
+const LS_KEY = "demotalk.flags";
+let flags = { barge_in: true, mcp: true, end_by_voice: true };
+let mcpAvailable = true;
+
+function loadFlags() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(LS_KEY) || "{}");
+    for (const k of FLAG_KEYS) if (typeof saved[k] === "boolean") flags[k] = saved[k];
+  } catch (e) { /* 损坏则忽略，用默认 */ }
+}
+function saveFlags() {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(flags)); } catch (e) {}
+}
 
 // 打字机
 let asstEl = null;      // 当前助手气泡 DOM
@@ -265,6 +285,36 @@ function connect() {
   ws.onerror = () => { setHint("连接出错"); };
 }
 
+function renderToggles() {
+  toggleRows.forEach((row) => {
+    const key = row.dataset.flag;
+    const sw = row.querySelector(".switch");
+    sw.setAttribute("aria-checked", String(flags[key]));
+    sw.disabled = key === "mcp" && !mcpAvailable;
+  });
+}
+function sendFlags() {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    try { ws.send(JSON.stringify({ type: "set_flags", ...flags })); } catch (e) {}
+  }
+}
+function setFlag(key, val) {
+  flags[key] = val;
+  saveFlags();
+  renderToggles();
+  sendFlags();
+}
+function applyDefaults(defaults) {
+  // localStorage 上次值 > .env 默认
+  loadFlags();
+  if (typeof defaults.barge_in === "boolean" && !(LS_KEY in localStorage)) flags.barge_in = defaults.barge_in;
+  if (typeof defaults.mcp === "boolean" && !(LS_KEY in localStorage)) flags.mcp = defaults.mcp;
+  if (typeof defaults.end_by_voice === "boolean" && !(LS_KEY in localStorage)) flags.end_by_voice = defaults.end_by_voice;
+  mcpAvailable = defaults.mcp_available !== false;
+  renderToggles();
+  sendFlags(); // 连接后立即把会话对齐到用户选择
+}
+
 function handleEvent(obj) {
   switch (obj.type) {
     case "tts_format":
@@ -273,6 +323,9 @@ function handleEvent(obj) {
     case "vision_config":
       if (obj.photo_max_size) photoMaxSize = obj.photo_max_size;
       if (obj.photo_quality) photoQuality = obj.photo_quality;
+      break;
+    case "config_defaults":
+      applyDefaults(obj);
       break;
     case "state":
       setState(obj.state);
@@ -442,3 +495,27 @@ btnStop.addEventListener("click", stopSession);
 
 setConn(false);
 setState("idle");
+
+// ---- 设置面板交互 ----
+function toggleSettings(open) {
+  settingsPanel.classList.toggle("hidden", !open);
+}
+btnSettings.addEventListener("click", (e) => { e.stopPropagation(); toggleSettings(settingsPanel.classList.contains("hidden")); });
+btnCloseSettings.addEventListener("click", () => toggleSettings(false));
+document.addEventListener("click", (e) => {
+  if (!settingsPanel.classList.contains("hidden") && !settingsPanel.contains(e.target) && e.target !== btnSettings) {
+    toggleSettings(false);
+  }
+});
+toggleRows.forEach((row) => {
+  row.querySelector(".switch").addEventListener("click", (e) => {
+    e.stopPropagation();
+    const sw = e.currentTarget;
+    if (sw.disabled) return;
+    setFlag(row.dataset.flag, !(sw.getAttribute("aria-checked") === "true"));
+  });
+});
+
+// 初始渲染（未连接时也显示开关，供用户预先设置）
+loadFlags();
+renderToggles();
