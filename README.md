@@ -86,6 +86,10 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `MCP_CONFIG_FILE` | `mcp.json` | MCP 配置文件路径（mcpServers 格式） |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | 服务监听 |
 
+### 运行时开关（前端）
+
+`ENABLE_BARGE_IN` / `ENABLE_MCP` / `ENABLE_END_BY_VOICE` 三项除 `.env` 默认值外，还可在浏览器右上角齿轮设置面板中**运行时切换**，立即生效（中断下一句句末生效；MCP / 语义结束下一轮 LLM 调用生效）。切换状态用 localStorage 记住，优先级：`localStorage 上次值` > `.env 默认`。MCP 仅屏蔽当前会话的工具暴露，不卸载连接。
+
 ### 关于 TTS 模型（重要）
 
 - `cosyvoice-v3-flash`（默认）：支持**系统音色**，开箱即出声，首包延迟约 350ms。
