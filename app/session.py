@@ -213,6 +213,13 @@ class Session:
         text = text.strip()
         if not text:
             return
+
+        # 回声检测：speaking 期间或 hangover 内，疑似助手播报的回声则丢弃，
+        # 不发 user_final、不 barge-in、不开新一轮（真用户声内容不同会通过）
+        if self._is_echo(text):
+            log.info("回声检测：丢弃疑似回声输入「%s」", text)
+            return
+
         await self._send({"type": "user_final", "text": text})
 
         if self.state == "speaking":

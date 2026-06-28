@@ -193,3 +193,94 @@ async def test_is_echo_respects_disable_switch(monkeypatch):
     s.state = "speaking"
     s._echo_ref = ["你好。"]
     assert s._is_echo("你好") is False
+
+
+# ---- _on_final 回声闸门集成 ----
+
+async def test_on_final_drops_echo_no_barge_no_turn():
+    """speaking 期间收到回声 final：丢弃，不 barge-in、不开新轮、不发 user_final。"""
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = ["你好，我是语音助手。"]
+    s.barge_in_enabled = True
+
+    barge = []
+
+    async def fake_barge():
+        barge.append(1)
+
+    s._barge_in = fake_barge
+    s._run_turn = AsyncMock()
+
+    sent = []
+
+    async def cap_send(obj):
+        sent.append(obj["type"])
+
+    s._send = cap_send
+
+    await s._on_final("你好我是语音助手")  # 回声
+
+    assert barge == []  # 未 barge-in
+    s._run_turn.assert_not_called()  # 未开新轮
+    assert "user_final" not in sent  # 未下发
+
+
+async def test_on_final_passes_real_voice_barges_in():
+    """speaking 期间收到真用户声（内容不同）：通过回声检测，正常 barge-in 并开新轮。"""
+    s, _ = _make_session()
+    s.state = "speaking"
+    s._echo_ref = ["你好，我是语音助手。"]
+    s.barge_in_enabled = True
+
+    barge = []
+
+    async def fake_barge():
+        barge.append(1)
+
+    s._barge_in = fake_barge
+    s._run_turn = AsyncMock()
+    try:
+        await s._on_final("帮我订个闹钟")  # 真用户声
+    finally:
+        if s._turn_task and not s._turn_task.done():
+            s._turn_task.cancel()
+
+    assert barge == [1]  # 正常 barge-in
+    s._run_turn.assert_called_once()  # barge-in 后开新轮
+
+
+async def test_on_final_drops_echo_tail_in_hangover():
+    """listening 但 hangover 内的回声尾巴：丢弃，不开新轮。"""
+    s, _ = _make_session()
+    s.state = "listening"
+    s._speaking_ended_at = time.monotonic()  # hangover 内
+    s._echo_ref = ["再见，下次再聊。"]
+
+    s._run_turn = AsyncMock()
+    sent = []
+
+    async def cap_send(obj):
+        sent.append(obj["type"])
+
+    s._send = cap_send
+
+    await s._on_final("再见下次再聊")  # 回声尾巴
+
+    s._run_turn.assert_not_called()
+    assert "user_final" not in sent
+
+
+async def test_on_final_passes_when_first_turn_empty_ref():
+    """首轮（_echo_ref 为空）：正常用户输入不被误判，正常开新轮。"""
+    s, _ = _make_session()
+    s.state = "listening"
+    s._echo_ref = []  # 首轮无参考
+    s._run_turn = AsyncMock()
+    try:
+        await s._on_final("你好")
+    finally:
+        if s._turn_task and not s._turn_task.done():
+            s._turn_task.cancel()
+
+    s._run_turn.assert_called_once()
