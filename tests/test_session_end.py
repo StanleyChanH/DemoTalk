@@ -166,3 +166,20 @@ async def test_force_close_after_skips_when_not_running():
     s._running = False
     await s._force_close_after(0)
     s.ws.close.assert_not_called()
+
+
+async def test_shutdown_cancels_end_fallback(monkeypatch):
+    """shutdown() 取消 _end_fallback 兜底任务，避免孤儿 task 持有 Session。"""
+    _stub_tts(monkeypatch)
+    s = _make_session()
+    # shutdown() 会调 stt.stop（可能阻塞），替换为 no-op 保证测试稳定
+    s.stt.stop = lambda: None
+    # 用一个真实的长 sleep task 模拟已调度的兜底任务
+    s._end_fallback = asyncio.get_event_loop().create_task(asyncio.sleep(100.0))
+    assert not s._end_fallback.done()
+
+    await s.shutdown()
+
+    assert s._end_fallback.done()
+    assert s._end_fallback.cancelled()
+

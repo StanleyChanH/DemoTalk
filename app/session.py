@@ -102,6 +102,16 @@ class Session:
                 pass
             except Exception:
                 log.debug("shutdown 取消回合任务异常", exc_info=True)
+        # 取消语义结束的兜底关闭任务（若已调度），避免孤儿 task 持有 Session 延迟 GC
+        fb = self._end_fallback
+        if fb is not None and not fb.done():
+            fb.cancel()
+            try:
+                await asyncio.wait_for(fb, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:
+                log.debug("shutdown 取消兜底任务异常", exc_info=True)
         # STT.stop 可能阻塞等待 task-finished，放到线程池避免卡事件循环
         try:
             await self.loop.run_in_executor(None, self.stt.stop)
@@ -274,6 +284,7 @@ class Session:
             return
         if self._running:
             log.info("结束对话兜底：主动关闭 WS（%ss 内前端未关）", delay)
+            # main.py ws_endpoint 的 finally 会再 ws.close() 一次，幂等，无副作用
             try:
                 await self.ws.close()
             except Exception:
