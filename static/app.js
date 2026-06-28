@@ -344,7 +344,10 @@ async function createVad(stream) {
   const vad = await MicVAD.new({
     getStream: async () => stream,
     baseAssetPath: "/static/vad/",
-    onnxWASMBasePath: "/static/vad/",
+    // onnxWASMBasePath 必须用绝对 URL：ort 的 .mjs loader 随 vad-web 从 CDN 加载，
+    // 内部用 new URL(path, import.meta.url) 解析 wasm 路径——若给相对 "/static/vad/"，
+    // 会被解析到 CDN 域（cdn.jsdelivr.net/static/vad/...）而 404。绝对 URL 不受基址影响。
+    onnxWASMBasePath: location.origin + "/static/vad/",
     ...initOpts,
     onSpeechStart: () => {
       // 进入候选：重置缓冲，开始积累（由 onFrameProcessed 的 else 分支）
