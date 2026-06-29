@@ -1,0 +1,36 @@
+# DemoTalk · Docker Compose 部署
+#
+# 用法：
+#   1) cp .env.example .env  并填入 DASHSCOPE_API_KEY=sk-xxxx
+#   2) docker compose up --build -d      （首次构建或改了代码需加 --build）
+#   3) 浏览器打开 http://<宿主IP>:8000   （本机即 http://127.0.0.1:8000）
+#
+# 常用：
+#   docker compose logs -f      # 看日志
+#   docker compose down         # 停止并清理
+#   docker compose restart      # 重启（改 .env 后生效）
+
+services:
+  demotalk:
+    build: .
+    image: demotalk:latest
+    container_name: demotalk
+    restart: unless-stopped
+    # 宿主端口跟随 .env 的 PORT（默认 8000）；容器内恒定监听 8000
+    ports:
+      - "${PORT:-8000}:8000"
+    env_file:
+      - .env
+    environment:
+      # 关键：容器内必须监听 0.0.0.0 才能从宿主访问。
+      # compose 规范中 environment 优先于 env_file，故可覆盖 .env 默认的 127.0.0.1。
+      HOST: 0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=2).status==200 else 1)"]
+      interval: 30s
+      timeout: 3s
+      start_period: 15s
+      retries: 3
+    # （可选）用宿主自定义 MCP 配置覆盖镜像内置 mcp.json：
+    #   volumes:
+    #     - ./mcp.json:/app/mcp.json:ro
