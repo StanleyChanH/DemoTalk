@@ -126,12 +126,22 @@ async def test_set_flags_mcp_toggle(monkeypatch):
 async def test_start_emits_config_defaults(monkeypatch):
     s, ws = _make_session()
     monkeypatch.setattr(s.stt, "start", lambda: None)  # 避免连 STT SDK
-    await s.start()
-    objs = _sent_objects(ws)
-    cd = next((o for o in objs if o.get("type") == "config_defaults"), None)
-    assert cd is not None
-    assert cd["barge_in"] == config.ENABLE_BARGE_IN
-    assert cd["mcp"] == config.ENABLE_MCP
-    assert cd["end_by_voice"] == config.ENABLE_END_BY_VOICE
-    assert "mcp_available" in cd
-    assert cd["vad_sensitivity"] == config.VAD_SENSITIVITY
+    try:
+        await s.start()
+        objs = _sent_objects(ws)
+        cd = next((o for o in objs if o.get("type") == "config_defaults"), None)
+        assert cd is not None
+        assert cd["barge_in"] == config.ENABLE_BARGE_IN
+        assert cd["mcp"] == config.ENABLE_MCP
+        assert cd["end_by_voice"] == config.ENABLE_END_BY_VOICE
+        assert cd["idle_timeout"] == config.ENABLE_IDLE_TIMEOUT
+        assert "mcp_available" in cd
+        assert cd["vad_sensitivity"] == config.VAD_SENSITIVITY
+    finally:
+        # start() 会起 _idle_task 看门狗，测试结束前回收避免孤儿
+        if s._idle_task and not s._idle_task.done():
+            s._idle_task.cancel()
+            try:
+                await s._idle_task
+            except asyncio.CancelledError:
+                pass
