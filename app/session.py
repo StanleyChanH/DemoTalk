@@ -88,6 +88,10 @@ class Session:
         # 回声检测：最近一轮喂给 TTS 的句子（比对参考）；speaking 结束时刻（hangover 窗口）
         self._echo_ref: list[str] = []
         self._speaking_ended_at: float = 0.0
+        # 空闲超时：是否启用（会话级，前端 set_flags 可动态覆盖）；最近一次会话活动时刻；watchdog 任务
+        self.idle_timeout_enabled = config.ENABLE_IDLE_TIMEOUT
+        self._last_activity: float = 0.0
+        self._idle_task: asyncio.Task | None = None
 
     # ---------- 生命周期 ----------
 
@@ -118,11 +122,15 @@ class Session:
                 "end_by_voice": config.ENABLE_END_BY_VOICE,
                 "mcp_available": mcp_manager.has_tools(),
                 "vad_sensitivity": config.VAD_SENSITIVITY,
+                "idle_timeout": config.ENABLE_IDLE_TIMEOUT,
             }
         )
         await self._set_state("listening")
         # 在事件循环线程里启动 SDK（其内部会开 WS 线程）
         self.stt.start()
+        # 空闲超时看门狗：listening 期间无活动达 IDLE_TIMEOUT 则播报提示并断开
+        self._last_activity = time.monotonic()
+        self._idle_task = asyncio.create_task(self._idle_loop())
 
     async def shutdown(self) -> None:
         self._running = False
@@ -146,6 +154,16 @@ class Session:
                 pass
             except Exception:
                 log.debug("shutdown 取消兜底任务异常", exc_info=True)
+        # 取消空闲超时看门狗
+        it = self._idle_task
+        if it is not None and not it.done():
+            it.cancel()
+            try:
+                await asyncio.wait_for(it, timeout=1.0)
+            except (asyncio.TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception:
+                log.debug("shutdown 取消空闲看门狗异常", exc_info=True)
         # STT.stop 可能阻塞等待 task-finished，放到线程池避免卡事件循环
         try:
             await self.loop.run_in_executor(None, self.stt.stop)
@@ -179,6 +197,10 @@ class Session:
         """
         if "barge_in" in msg:
             self.barge_in_enabled = bool(msg["barge_in"])
+
+        if "idle_timeout" in msg:
+            # 空闲超时开关：改会话属性，watchdog 下一次循环即生效
+            self.idle_timeout_enabled = bool(msg["idle_timeout"])
 
         if "end_by_voice" in msg:
             want = bool(msg["end_by_voice"])
@@ -220,6 +242,8 @@ class Session:
             log.info("回声检测：丢弃疑似回声输入「%s」", text)
             return
 
+        # 真实用户输入：刷新空闲计时（回声不刷新）
+        self._last_activity = time.monotonic()
         await self._send({"type": "user_final", "text": text})
 
         if self.state == "speaking":
@@ -342,11 +366,62 @@ class Session:
     async def _barge_in(self) -> None:
         log.info("barge-in：打断当前 TTS")
         self._current_turn += 1  # 使正在进行的轮次失效
+        self._last_activity = time.monotonic()  # 打断也算用户活动，刷新空闲计时
         if self.tts is not None:
             self.tts.cancel()
             self.tts = None
         await self._send({"type": "cancel_playback"})
         await self._set_state("listening")
+
+    # ---------- 空闲超时（watchdog）----------
+
+    async def _idle_loop(self) -> None:
+        """每秒复查：listening 期间无活动达 IDLE_TIMEOUT 则触发提示并断开。触发后退出（幂等）。"""
+        try:
+            while self._running:
+                await asyncio.sleep(1)
+                if not self._running:
+                    break
+                if (
+                    self.idle_timeout_enabled
+                    and self.state == "listening"
+                    and not self._ending
+                    and self._last_activity > 0
+                    and (time.monotonic() - self._last_activity) >= config.IDLE_TIMEOUT
+                ):
+                    await self._idle_timeout_react()
+                    return
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            log.exception("空闲看门狗异常")
+
+    async def _idle_timeout_react(self) -> None:
+        """空闲超时动作：播一句固定提示语，复用语义结束收尾路径自动断开。
+
+        置 _ending=True → 起 TTS 播提示语 → tts_end 回调检测 _ending
+        → _end_conversation_close（发 conversation_end + 兜底关闭）。前端零改动。
+        """
+        if self._ending or not self._running:
+            return
+        # 复查 race：sleep 期间用户可能已开口
+        if (time.monotonic() - self._last_activity) < config.IDLE_TIMEOUT:
+            return
+        log.info("空闲超时：%ss 无活动，播报提示后断开", config.IDLE_TIMEOUT)
+        self._ending = True  # 复用语义结束收尾
+        await self._set_state("thinking")  # UI 反馈；tts_start 会切 speaking
+        prompt = config.IDLE_PROMPT
+        await self._send({"type": "delta", "text": prompt})  # 前端打字机气泡
+        tts = TTSService(
+            on_audio=self._on_tts_audio,
+            on_state=self._on_tts_state,
+            loop=self.loop,
+        )
+        self.tts = tts  # _on_tts_audio 的 source is self.tts 判定需要
+        tts.start()
+        tts.feed(prompt)
+        tts.finish()
+        # 之后由 TTS 回调推进：tts_start→speaking，tts_end（_ending）→_end_conversation_close
 
     # ---------- 语义结束（end_conversation）----------
 
@@ -422,6 +497,8 @@ class Session:
             if self._ending:
                 await self._end_conversation_close()
             else:
+                # 助手说完回到 listening：刷新空闲计时，给用户完整回应窗口
+                self._last_activity = time.monotonic()
                 await self._set_state("listening")
         elif event == "tts_error":
             await self._send({"type": "error", "message": "语音合成失败"})

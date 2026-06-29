@@ -45,9 +45,9 @@ let sources = [];
 let endingByVoice = false;
 
 // ---- 功能开关（中断 / MCP / 语义结束）----
-const FLAG_KEYS = ["barge_in", "mcp", "end_by_voice"];
+const FLAG_KEYS = ["barge_in", "mcp", "end_by_voice", "idle_timeout"];
 const LS_KEY = "demotalk.flags";
-let flags = { barge_in: true, mcp: true, end_by_voice: true, vad_sensitivity: 50 };
+let flags = { barge_in: true, mcp: true, end_by_voice: true, idle_timeout: true, vad_sensitivity: 50 };
 let mcpAvailable = true;
 
 function loadFlags() {

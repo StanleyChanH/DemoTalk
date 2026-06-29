@@ -80,6 +80,9 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 | `ENABLE_ECHO_DETECT` | `true` | 回声检测总开关（外放自循环防护） |
 | `ECHO_SIMILARITY_THRESHOLD` | `0.6` | 回声相似度阈值 0-1，越低越激进判回声 |
 | `ECHO_HANGOVER_MS` | `1200` | speaking 结束后仍检测的窗口(毫秒) |
+| `ENABLE_IDLE_TIMEOUT` | `true` | 空闲超时总开关（listening 期间无输入自动播报提示并断开） |
+| `IDLE_TIMEOUT` | `15` | 空闲多少秒触发断开 |
+| `IDLE_PROMPT` | （固定文案） | 超时播报的提示语，直接喂 TTS |
 | `ENABLE_VISION` | `true` | 是否启用视觉（take_photo 工具） |
 | `PHOTO_MAX_SIZE` | `640` | 拍照最长边像素 |
 | `PHOTO_QUALITY` | `0.8` | JPEG 质量 |
@@ -92,7 +95,7 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ### 运行时开关（前端）
 
-`ENABLE_BARGE_IN` / `ENABLE_MCP` / `ENABLE_END_BY_VOICE` 三项除 `.env` 默认值外，还可在浏览器右上角齿轮设置面板中**运行时切换**，立即生效（中断下一句句末生效；MCP / 语义结束下一轮 LLM 调用生效）。切换状态用 localStorage 记住，优先级：`localStorage 上次值` > `.env 默认`。MCP 仅屏蔽当前会话的工具暴露，不卸载连接。
+`ENABLE_BARGE_IN` / `ENABLE_MCP` / `ENABLE_END_BY_VOICE` / `ENABLE_IDLE_TIMEOUT` 四项除 `.env` 默认值外，还可在浏览器右上角齿轮设置面板中**运行时切换**，立即生效（中断下一句句末生效；MCP / 语义结束下一轮 LLM 调用生效；空闲超时下一次看门狗复查 ≤1s 生效）。切换状态用 localStorage 记住，优先级：`localStorage 上次值` > `.env 默认`。MCP 仅屏蔽当前会话的工具暴露，不卸载连接。
 
 ### 语音门控（VAD）
 

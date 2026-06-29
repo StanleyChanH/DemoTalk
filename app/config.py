@@ -75,6 +75,14 @@ ENABLE_ECHO_DETECT: bool = _bool("ENABLE_ECHO_DETECT", True)
 ECHO_SIMILARITY_THRESHOLD: float = _float("ECHO_SIMILARITY_THRESHOLD", 0.6)
 ECHO_HANGOVER_MS: int = _int("ECHO_HANGOVER_MS", 1200)
 
+# ---- 空闲超时（长时间无输入自动播报提示并断开）----
+ENABLE_IDLE_TIMEOUT: bool = _bool("ENABLE_IDLE_TIMEOUT", True)
+IDLE_TIMEOUT: int = _int("IDLE_TIMEOUT", 15)  # 秒，listening 期间无活动达此值则触发
+IDLE_PROMPT: str = _get(
+    "IDLE_PROMPT",
+    "你好像暂时不需要我了，我先挂啦，需要时随时叫我。",
+)
+
 # ---- 服务 ----
 HOST: str = _get("HOST", "127.0.0.1")
 PORT: int = _int("PORT", 8000)
