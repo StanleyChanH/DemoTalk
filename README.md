@@ -10,6 +10,7 @@
 | 视觉（多模态） | `qwen3.7-plus` | LLM 主动调用 `take_photo` 工具 → 前端拍照 → 多模态回传 |
 
 - 浏览器前端：双列布局（左聊天 / 右摄像头取景器）+「暖夜控制台」暖色调科技风视觉；打字机流式对话输出、开始/结束对话按钮、调用本机麦克风、扬声器与摄像头。
+- **前后端分离**：后端纯 WebSocket API（独立容器/进程），前端纯静态 nginx（独立容器），浏览器**直连**后端 `/ws`。可同时部署，也可只起前端或只起后端。
 - 低延迟：STT 实时转写、LLM 流式产出、按句即时喂给 TTS、PCM 直传播放（首包约 350ms）。
 - 视觉：对话需要"看"时（如「这是什么」「前面有什么」），LLM 主动调 `take_photo` 拍照，基于画面回答（qwen3.7-plus 多模态）。
 - 支持打断（barge-in）：助手说话时你开口，立即停止播报并进入新一轮。
@@ -17,20 +18,49 @@
 
 ## 架构
 
+```mermaid
+flowchart LR
+    User(["👤 浏览器"]):::user
+    subgraph FE["前端容器 · nginx :80"]
+        direction TB
+        Page["index.html / app.js<br/>VAD 门控 · 打字机 · PCM 播放"]
+        Config["config.js<br/>window.DEMOTALK_WS_URL"]
+    end
+    subgraph BE["后端容器 · FastAPI :8000"]
+        direction TB
+        WS["/ws · WebSocket 端点"]
+        Pipeline["STT → LLM → TTS 编排<br/>fun-asr-realtime · qwen3.7-plus · cosyvoice"]
+    end
+    DS[("阿里云百炼 DashScope")]:::cloud
+
+    User -->|http 加载页面| Page
+    Config -.->|注入后端地址| Page
+    User -.->|ws/wss · PCM 上行| WS
+    WS -.->|事件 + TTS 音频下行| User
+    WS --> Pipeline
+    Pipeline <--> DS
+
+    classDef user fill:#ffe8d9,stroke:#d97706,color:#333;
+    classDef cloud fill:#e0f2fe,stroke:#0284c7,color:#333;
 ```
-浏览器麦克风(16kHz/16bit PCM) + 摄像头预览
-   │  WebSocket binary（PCM） / 文本事件
-   ▼
-FastAPI ──► STT(fun-asr-realtime, SDK线程)  ──partial──► 实时字幕
-   │                                          └─final─► LLM(qwen3.7-plus, enable_thinking=False)
-   │                                                       ├─delta─► 打字机文本 + 按句喂 TTS
-   │                                                       │                └─PCM─► 浏览器播放
-   │                                                       └─tool_calls(take_photo)─► WS 下发 take_photo
-   │                                                                                      └─前端抓帧 → photo 回传
-   │                                                                                      └─多模态 tool 结果回 LLM
-   │                                                                                           └─delta─► 打字机 + TTS
-   └─ barge-in：句末到达且当前在播报 → 取消 TTS + 停止播放
+
+> **部署拓扑**：前端容器只托管静态资源（不反代 WS）；浏览器**直连**后端容器 `/ws`（跨域）。生产 `wss` 由后端前置 nginx/Caddy 终止 TLS。两容器互相独立，可单独启动。
+
+<details><summary>内部数据流（ASCII）</summary>
+
 ```
+浏览器 ──http──▶ 前端容器 (nginx, 纯静态 + config.js 注入 DEMOTALK_WS_URL)
+   │
+   └──ws/wss──▶ 后端容器 (FastAPI :8000 /ws)
+                  ├─ STT(fun-asr-realtime, SDK线程) ──partial──► 实时字幕
+                  │     └─final─► LLM(qwen3.7-plus, enable_thinking=False)
+                  │                      ├─delta─► 打字机文本 + 按句喂 TTS
+                  │                      │                └─PCM─► 浏览器播放
+                  │                      └─tool_calls(take_photo)─► WS 下发 take_photo
+                  │                                                     └─前端抓帧 → photo 回传 → 多模态回 LLM
+                  └─ barge-in：句末到达且当前在播报 → 取消 TTS + 停止播放
+```
+</details>
 
 线程模型：STT/TTS 回调运行在 dashscope SDK 自有线程，经 `asyncio.run_coroutine_threadsafe` 桥接到事件循环；LLM 用 `AsyncOpenAI` 纯异步。状态机：`listening → thinking → speaking → listening`。
 
@@ -41,57 +71,92 @@ FastAPI ──► STT(fun-asr-realtime, SDK线程)  ──partial──► 实�
 - **百炼 API Key**：在 [百炼控制台](https://bailian.console.aliyun.com/?tab=model#/api-key) 获取（本项目默认走**北京**地域）。
 - 浏览器需支持 `AudioWorklet`（Chrome / Edge / Firefox 新版均可）；首次需允许**麦克风与摄像头**权限（视觉功能需要摄像头）。
 
-## 快速开始
+## 快速开始（本地开发）
+
+### 后端
 
 ```bash
-# 1. 安装依赖（uv 自动建 .venv）
-uv sync
-# Windows 若报“系统无法打开指定的设备或文件”（Defender 锁文件），改用：
-#   UV_LINK_MODE=copy uv sync --no-install-project
-
-# 2. 配置 API Key
-cp .env.example .env
-#   编辑 .env，填入 DASHSCOPE_API_KEY=sk-xxxx
-
-# 3. 启动
+cd backend
+uv sync                                    # uv 自动建 .venv（Windows 若报锁文件，加 UV_LINK_MODE=copy）
 uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-# 若 uv sync 成功安装了项目本体（未用 --no-install-project），也可用：uv run demotalk
 ```
 
-> 自检（无头往返，用 TTS 合成的语音喂回 STT 验证全链路）：先按上面启动服务，另开终端 `uv run python scripts/selftest.py`，看到 `===== 全部自检通过 =====` 即代表 STT→LLM→TTS 真实打通。
+### 前端
 
-浏览器打开 <http://127.0.0.1:8000>，点「**开始对话**」，允许**麦克风与摄像头**后即可开口交谈；问「我前面这是什么」可触发视觉拍照。
+纯静态，任选一种方式 serve（让浏览器能加载页面）：
 
-## Docker 部署（推荐新手）
+```bash
+# 方式 A：前端容器（自动按 DEMOTALK_BACKEND_URL 生成 config.js 指向后端）
+docker compose up frontend
 
-不想装 Python / uv？用 Docker 一条命令跑起来。
+# 方式 B：本地静态服务，手写 config.js 指向后端
+cd frontend
+echo 'window.DEMOTALK_WS_URL = "ws://localhost:8000/ws";' > config.js
+python -m http.server 8080
+```
+
+浏览器打开 <http://localhost:8080>，点「**开始对话**」，允许**麦克风与摄像头**后即可开口交谈。
+
+> 自检（无头往返，TTS 合成语音喂回 STT 验证全链路）：先启动后端，另开终端 `cd backend && uv run python scripts/selftest.py`，看到 `===== 全部自检通过 =====` 即代表 STT→LLM→TTS 真实打通。
+
+## Docker 部署（前后端分离，推荐）
+
+前后端各自独立镜像/容器，可一起部署，也可单独起。
 
 **前置**：装好 [Docker](https://docs.docker.com/get-docker/)（自带 Docker Compose v2）。
 
 ```bash
-# 1. 配置 API Key（同上）
+# 1. 配置 API Key
 cp .env.example .env
 #   编辑 .env，填入 DASHSCOPE_API_KEY=sk-xxxx
 
 # 2. 构建并后台启动（首次或改了代码加 --build）
 docker compose up --build -d
 
-# 3. 查看状态与日志（STATUS 变 healthy 即就绪）
+# 3. 查看状态与日志（backend STATUS 变 healthy 即就绪）
 docker compose ps
 docker compose logs -f
 ```
 
-浏览器打开 <http://127.0.0.1:8000>（局域网 / 服务器部署用宿主 IP）。
+浏览器打开 <http://localhost:8080>（前端，`FRONTEND_PORT` 默认 8080）；后端 WS 在 `ws://localhost:8000`（`BACKEND_PORT` 默认 8000）。
+
+**分离启动**（两服务互相独立，无 `depends_on`）：
+
+```bash
+docker compose up backend      # 仅后端：:8000，可被任意 WS 客户端 / selftest 直连
+docker compose up frontend     # 仅前端：:8080，页面可加载；后端不在时 WS 连不上 → 优雅降级
+```
 
 **停止**：`docker compose down`。**改完 `.env` 生效**：`docker compose restart`。
 
 说明：
 
-- 容器内固定监听 `8000`；想换宿主端口改 `.env` 的 `PORT`（如 `PORT=9000`，则访问 `http://127.0.0.1:9000`）。
-- 首次需联网：构建时拉基础镜像与 pip 依赖，运行时前端 VAD 库走 jsdelivr CDN（与本地一致），之后浏览器缓存。
-- 不依赖 ffmpeg / 数据库：纯 WebSocket 转发 + dashscope SDK。
-- 镜像内置默认 `mcp.json`（SSE 类型）。如需自定义 MCP 配置，取消 `docker-compose.yml` 里 `volumes` 挂载的注释、用宿主 `mcp.json` 覆盖；若要用 stdio 类 MCP server（如 `npx`），需自行在镜像里补对应运行时（Node 等）。
-- 多阶段构建，以非 root 用户运行，仅打包运行所需源码与静态资源。
+- `DEMOTALK_BACKEND_URL`（默认 `ws://localhost:8000`）是**浏览器视角**的后端 WS 地址，前端容器据此生成 `config.js`。本地直连用 localhost；**局域网/服务器部署需改成浏览器实际可达地址**（如 `ws://192.168.1.10:8000` 或 `wss://api.example.com`）。
+- **生产 wss**：后端容器内跑明文 `ws`；`wss`（WS over TLS）由后端前置 nginx/Caddy 终止 TLS 后反代到后端容器，`.env` 设 `DEMOTALK_BACKEND_URL=wss://...`。最小示例见下方「生产 wss 反代」。
+- 端口：后端宿主 `BACKEND_PORT`（容器内恒 8000），前端宿主 `FRONTEND_PORT`（容器内恒 80）。
+- 首次需联网：构建拉基础镜像与依赖；运行时前端 VAD 库走 jsdelivr CDN，之后浏览器缓存。
+- 后端镜像内置默认 `mcp.json`（SSE 类型）。自定义 MCP 取消 `docker-compose.yml` 里 `backend.volumes` 注释用宿主 `backend/mcp.json` 覆盖；stdio 类 MCP（如 `npx`）需自行在后端镜像补运行时。
+- 多阶段构建、非 root 运行；后端镜像仅打包 `app/`、前端镜像仅打包 `static/`，彻底分离。
+
+### 生产 wss 反代（后端前置 nginx 示例）
+
+```nginx
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+    ssl_certificate     /path/fullchain.pem;
+    ssl_certificate_key /path/privkey.pem;
+
+    location /ws {
+        proxy_pass http://<后端容器>:8000/ws;   # 后端容器名/地址
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 3600s;
+    }
+}
+```
+然后 `.env` 设 `DEMOTALK_BACKEND_URL=wss://api.example.com`，`docker compose up frontend` 重新生成 `config.js`。
 
 ## 配置项（.env）
 
@@ -127,7 +192,10 @@ docker compose logs -f
 | `SENTENCE_SPLIT_MAX_LEN` | `12` | 无标点时累积到此字数也强制喂 TTS（0=禁用） |
 | `ENABLE_VAD_TURN_END` | `true` | 前端 VAD `speech_end` 提前触发回合结束（替代等 STT final 800ms） |
 | `ENABLE_LOCAL_BARGE_IN` | `true` | 前端 VAD 即时本地打断 + 上行 cancel（false 回退纯服务端） |
-| `HOST` / `PORT` | `127.0.0.1` / `8000` | 服务监听 |
+| `HOST` / `PORT` | `127.0.0.1` / `8000` | 本地直接跑后端时的监听（docker 容器内恒 8000） |
+| `BACKEND_PORT` | `8000` | docker：后端宿主端口（浏览器 WS 直连） |
+| `FRONTEND_PORT` | `8080` | docker：前端宿主端口（浏览器打开） |
+| `DEMOTALK_BACKEND_URL` | `ws://localhost:8000` | 浏览器视角后端 WS 地址（生产 `wss://...`） |
 
 ### 运行时开关（前端）
 
@@ -135,7 +203,7 @@ docker compose logs -f
 
 ### 语音门控（VAD）
 
-前端接入 Silero VAD（`@ricky0123/vad-web`）：只有检测到**人声**的麦克风帧才上传给 ASR，静音与非人声噪声（键盘、咳嗽、电视音乐、风声等）被丢弃，显著降低背景噪声对对话的干扰。Silero ONNX 模型与 onnxruntime WASM 本地托管于 `static/vad/`；库 JS 走 jsdelivr CDN（**首次加载需联网**，之后浏览器缓存）。库初始化失败时自动回退到无门控直传。
+前端接入 Silero VAD（`@ricky0123/vad-web`）：只有检测到**人声**的麦克风帧才上传给 ASR，静音与非人声噪声（键盘、咳嗽、电视音乐、风声等）被丢弃，显著降低背景噪声对对话的干扰。Silero ONNX 模型与 onnxruntime WASM 本地托管于前端 `static/vad/`（路径 `frontend/static/vad/`）；库 JS 走 jsdelivr CDN（**首次加载需联网**，之后浏览器缓存）。库初始化失败时自动回退到无门控直传。
 
 > **首次加载延迟**：首次「开始对话」需下载并编译 ort WASM（~11MB），冷启动约 30-60 秒；浏览器缓存后，后续会话几乎无感。
 
@@ -174,34 +242,32 @@ docker compose logs -f
 
 ```
 DemoTalk/
-├── pyproject.toml          # uv 依赖与入口
-├── mcp.json                # MCP server 配置（mcpServers 格式）
-├── .env.example            # 配置模板
-├── Dockerfile              # 容器镜像构建（uv 多阶段）
-├── docker-compose.yml      # 一键容器化部署
-├── .dockerignore           # 镜像构建排除规则
-├── app/
-│   ├── main.py             # FastAPI：静态前端 + WebSocket
-│   ├── config.py           # 环境变量配置
-│   ├── session.py          # 会话编排：状态机 + 三服务联动 + barge-in + tool 循环
-│   ├── stt.py              # fun-asr-realtime 封装
-│   ├── llm.py              # qwen3.7-plus 流式（astream_once + tool_calls 检测）
-│   ├── tts.py              # cosyvoice 流式封装
-│   ├── tools/              # 通用 tool 框架（视觉 take_photo；将来 MCP/Skills 复用）
-│   │   ├── base.py         # ToolResult / ToolContext / Tool 协议
-│   │   ├── registry.py     # ToolRegistry 注册表
-│   │   ├── builtin/take_photo.py
-│   │   └── builtin/end_conversation.py
-│   └── mcp/                # MCP client（config/client/adapter/manager）
-│       ├── config.py       # 读 mcp.json
-│       ├── client.py       # McpClient SSE/stdio
-│       ├── adapter.py      # McpToolAdapter → Tool
-│       └── manager.py      # McpManager 进程级加载
-└── static/
-    ├── index.html          # 界面
-    ├── style.css           # 样式
-    ├── app.js              # 麦克风/VAD 门控/打字机/播放/WS 逻辑
-    └── vad/                # Silero VAD 本地资源（onnx 模型 + ort wasm + worklet bundle）
+├── backend/                # 后端（FastAPI 纯 WebSocket API）
+│   ├── app/
+│   │   ├── main.py         # FastAPI：/ws + /healthz（不托管静态前端）
+│   │   ├── config.py       # 环境变量配置
+│   │   ├── session.py      # 会话编排：状态机 + 三服务联动 + barge-in + tool 循环
+│   │   ├── stt.py / llm.py / tts.py   # fun-asr-realtime / qwen3.7-plus / cosyvoice
+│   │   ├── tools/          # take_photo / end_conversation + registry
+│   │   └── mcp/            # MCP client（config/client/adapter/manager）
+│   ├── tests/              # pytest 单测
+│   ├── scripts/selftest.py # 真实全链路自检
+│   ├── pyproject.toml / uv.lock / mcp.json / .python-version
+│   ├── Dockerfile          # 后端镜像（uv 多阶段，仅打包 app/）
+│   └── .dockerignore
+├── frontend/               # 前端（nginx 纯静态）
+│   ├── index.html          # 入口页面（/ 返回它）
+│   ├── static/
+│   │   ├── style.css
+│   │   ├── app.js          # 麦克风/VAD 门控/打字机/播放/WS 逻辑（读 DEMOTALK_WS_URL）
+│   │   └── vad/            # Silero VAD 本地资源（onnx + ort wasm + worklet bundle）
+│   ├── nginx.conf          # 纯静态托管（不反代 WS；浏览器直连后端）
+│   ├── entrypoint.sh       # 按 DEMOTALK_BACKEND_URL 生成 config.js
+│   ├── Dockerfile          # 前端镜像（nginx:alpine + static/）
+│   └── .dockerignore
+├── docker-compose.yml      # 两服务（backend + frontend，互相独立，无 depends_on）
+├── .env.example            # 根级配置（后端变量 + 部署端口 + DEMOTALK_BACKEND_URL）
+└── README.md
 ```
 
 ## 视觉能力（摄像头）
@@ -222,7 +288,7 @@ DemoTalk/
 
 DemoTalk 可作为 MCP client 连接外部 MCP server，把 server 的工具暴露给 LLM。MCP 工具与视觉 `take_photo` 共存，复用同一 tool-calling 循环。
 
-配置文件 `mcp.json`（项目根，标准 `mcpServers` 格式），支持 SSE 与 stdio：
+配置文件 `backend/mcp.json`（标准 `mcpServers` 格式），支持 SSE 与 stdio：
 
 ```json
 {

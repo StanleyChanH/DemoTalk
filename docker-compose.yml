@@ -1,29 +1,32 @@
-# DemoTalk · Docker Compose 部署
+# DemoTalk · 前后端分离 Docker Compose 部署
 #
 # 用法：
 #   1) cp .env.example .env  并填入 DASHSCOPE_API_KEY=sk-xxxx
-#   2) docker compose up --build -d      （首次构建或改了代码需加 --build）
-#   3) 浏览器打开 http://<宿主IP>:8000   （本机即 http://127.0.0.1:8000）
+#   2) docker compose up --build -d      （首次或改代码加 --build）
+#   3) 浏览器打开 http://<宿主IP>:${FRONTEND_PORT:-8080}（本机即 http://localhost:8080）
+#
+# 分离启动（两服务互相独立，无 depends_on）：
+#   docker compose up backend            # 仅后端（:8000，可被任意 WS 客户端/selftest 连）
+#   docker compose up frontend           # 仅前端（:8080，页面可加载；后端不在时 WS 连不上→优雅降级）
 #
 # 常用：
-#   docker compose logs -f      # 看日志
-#   docker compose down         # 停止并清理
-#   docker compose restart      # 重启（改 .env 后生效）
+#   docker compose logs -f
+#   docker compose down
+#   docker compose restart
 
 services:
-  demotalk:
-    build: .
-    image: demotalk:latest
-    container_name: demotalk
+  backend:
+    build: ./backend
+    image: demotalk-backend:latest
+    container_name: demotalk-backend
     restart: unless-stopped
-    # 宿主端口跟随 .env 的 PORT（默认 8000）；容器内恒定监听 8000
+    # 宿主端口跟随 .env 的 BACKEND_PORT（默认 8000）；容器内恒定监听 8000
     ports:
-      - "${PORT:-8000}:8000"
+      - "${BACKEND_PORT:-8000}:8000"
     env_file:
       - .env
     environment:
-      # 关键：容器内必须监听 0.0.0.0 才能从宿主访问。
-      # compose 规范中 environment 优先于 env_file，故可覆盖 .env 默认的 127.0.0.1。
+      # 关键：容器内必须监听 0.0.0.0 才能被浏览器直连（compose 覆盖 .env 的 127.0.0.1）
       HOST: 0.0.0.0
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=2).status==200 else 1)"]
@@ -33,4 +36,18 @@ services:
       retries: 3
     # （可选）用宿主自定义 MCP 配置覆盖镜像内置 mcp.json：
     #   volumes:
-    #     - ./mcp.json:/app/mcp.json:ro
+    #     - ./backend/mcp.json:/app/mcp.json:ro
+
+  frontend:
+    build: ./frontend
+    image: demotalk-frontend:latest
+    container_name: demotalk-frontend
+    restart: unless-stopped
+    # 宿主端口跟随 .env 的 FRONTEND_PORT（默认 8080）；容器内恒定 80
+    ports:
+      - "${FRONTEND_PORT:-8080}:80"
+    environment:
+      # 浏览器视角的后端 WS 地址（前端容器 entrypoint 据此生成 config.js）
+      # 本地：ws://localhost:8000；生产：wss://api.example.com（由后端前置 TLS 代理终止）
+      DEMOTALK_BACKEND_URL: "${DEMOTALK_BACKEND_URL:-ws://localhost:8000}"
+    # 不加 depends_on：两服务完全独立，支持 docker compose up backend / frontend 单独启动

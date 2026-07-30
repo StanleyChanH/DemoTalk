@@ -1,15 +1,17 @@
-"""FastAPI 入口：静态前端 + 单 WebSocket（双向：mic PCM 上行 / 文本事件+TTS PCM 下行）。"""
+"""FastAPI 后端入口：纯 WebSocket 实时语音助手 API（/ws + /healthz）。
+
+前后端分离架构：前端由独立的 nginx 容器提供静态资源，浏览器**直连**本服务 /ws
+（前端通过 DEMOTALK_BACKEND_URL 配置后端地址）。本服务不再托管静态前端。
+"""
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-import pathlib
 
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 
 from contextlib import asynccontextmanager
 
@@ -24,9 +26,6 @@ logging.basicConfig(
 )
 log = logging.getLogger("demotalk")
 
-BASE_DIR = pathlib.Path(__file__).resolve().parent.parent
-STATIC_DIR = BASE_DIR / "static"
-
 @asynccontextmanager
 async def lifespan(app):
     if config.ENABLE_MCP:
@@ -37,12 +36,12 @@ async def lifespan(app):
 
 
 app = FastAPI(title="DemoTalk", version="0.1.0", lifespan=lifespan)
-app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
 
 @app.get("/")
-async def index():
-    return FileResponse(str(STATIC_DIR / "index.html"))
+async def root():
+    """服务信息。前后端分离后根路径不再返回前端页面（前端在独立容器）。"""
+    return JSONResponse({"service": "demotalk-backend", "ws": "/ws", "health": "/healthz"})
 
 
 @app.get("/healthz")

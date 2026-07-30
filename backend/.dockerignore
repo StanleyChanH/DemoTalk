@@ -1,0 +1,28 @@
+# Python 缓存与本地虚拟环境（容器内重新装 .venv）
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# git 历史
+.git/
+
+# 测试与自检产物（不影响运行）
+tests/
+.pytest_cache/
+.uv-cache/
+scripts/*.wav
+
+# 密钥（运行时通过 docker compose env 注入，绝不烤进镜像）
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 放行 hatchling 打包 wheel 需要读取的 README
+!README.md
