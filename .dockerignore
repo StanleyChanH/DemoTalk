@@ -1,0 +1,35 @@
+# Python 缓存与本地虚拟环境（容器内重新装 .venv）
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# git 历史（不入镜像）
+.git/
+
+# 独立子项目（未跟踪、含 625MB venv，与主服务无关，绝不入镜像）
+client/
+
+# 文档与测试（不影响运行；docs/* 也在 .gitignore 内）
+docs/
+tests/
+.omc/
+.pytest_cache/
+.uv-cache/
+
+# 密钥（运行时通过 docker compose 的 env_file 注入，绝不烤进镜像）
+.env
+.env.*
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 自检产物（.wav）
+scripts/*.wav
+
+# 放行 hatchling 打包 wheel 需要读取的 README（上面 *.md 未排除，此处显式声明意图）
+!README.md

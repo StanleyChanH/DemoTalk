@@ -62,6 +62,37 @@ uv run python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 浏览器打开 <http://127.0.0.1:8000>，点「**开始对话**」，允许**麦克风与摄像头**后即可开口交谈；问「我前面这是什么」可触发视觉拍照。
 
+## Docker 部署（推荐新手）
+
+不想装 Python / uv？用 Docker 一条命令跑起来。
+
+**前置**：装好 [Docker](https://docs.docker.com/get-docker/)（自带 Docker Compose v2）。
+
+```bash
+# 1. 配置 API Key（同上）
+cp .env.example .env
+#   编辑 .env，填入 DASHSCOPE_API_KEY=sk-xxxx
+
+# 2. 构建并后台启动（首次或改了代码加 --build）
+docker compose up --build -d
+
+# 3. 查看状态与日志（STATUS 变 healthy 即就绪）
+docker compose ps
+docker compose logs -f
+```
+
+浏览器打开 <http://127.0.0.1:8000>（局域网 / 服务器部署用宿主 IP）。
+
+**停止**：`docker compose down`。**改完 `.env` 生效**：`docker compose restart`。
+
+说明：
+
+- 容器内固定监听 `8000`；想换宿主端口改 `.env` 的 `PORT`（如 `PORT=9000`，则访问 `http://127.0.0.1:9000`）。
+- 首次需联网：构建时拉基础镜像与 pip 依赖，运行时前端 VAD 库走 jsdelivr CDN（与本地一致），之后浏览器缓存。
+- 不依赖 ffmpeg / 数据库：纯 WebSocket 转发 + dashscope SDK。
+- 镜像内置默认 `mcp.json`（SSE 类型）。如需自定义 MCP 配置，取消 `docker-compose.yml` 里 `volumes` 挂载的注释、用宿主 `mcp.json` 覆盖；若要用 stdio 类 MCP server（如 `npx`），需自行在镜像里补对应运行时（Node 等）。
+- 多阶段构建，以非 root 用户运行，仅打包运行所需源码与静态资源。
+
 ## 配置项（.env）
 
 | 变量 | 默认 | 说明 |
@@ -128,6 +159,9 @@ DemoTalk/
 ├── pyproject.toml          # uv 依赖与入口
 ├── mcp.json                # MCP server 配置（mcpServers 格式）
 ├── .env.example            # 配置模板
+├── Dockerfile              # 容器镜像构建（uv 多阶段）
+├── docker-compose.yml      # 一键容器化部署
+├── .dockerignore           # 镜像构建排除规则
 ├── app/
 │   ├── main.py             # FastAPI：静态前端 + WebSocket
 │   ├── config.py           # 环境变量配置
