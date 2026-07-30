@@ -35,6 +35,8 @@ class STTService:
         self._on_final = on_final
         self._loop = loop
         self._recognition: Recognition | None = None
+        # 最新 partial 文本缓存：供前端 VAD speech_end 提前触发 turn-end 时取用（不等 STT final）
+        self._last_partial: str = ""
 
         # 全局设置（SDK 读取），后续 TTS 也复用
         dashscope.api_key = config.DASHSCOPE_API_KEY
@@ -53,7 +55,14 @@ class STTService:
                 if not text:
                     return
                 is_final = RecognitionResult.is_sentence_end(sentence)
-                coro = svc._on_final(text) if is_final else svc._on_partial(text)
+                if is_final:
+                    # 句末：清空缓存，避免下一轮 speech_end 误用上一轮残留 partial
+                    svc._last_partial = ""
+                    coro = svc._on_final(text)
+                else:
+                    # 缓存最新 partial：前端 VAD speech_end 可据此提前结束回合
+                    svc._last_partial = text
+                    coro = svc._on_partial(text)
                 # 从 SDK 线程把协程投递到事件循环
                 asyncio.run_coroutine_threadsafe(coro, svc._loop)
 
@@ -82,6 +91,11 @@ class STTService:
         """喂入 16kHz/16bit/单声道 PCM 帧。线程安全（由 asyncio 线程调用）。"""
         if self._recognition is not None:
             self._recognition.send_audio_frame(pcm)
+
+    @property
+    def last_partial(self) -> str:
+        """最新 STT partial 文本（供 VAD speech_end 提前触发 turn-end 时取用）。"""
+        return self._last_partial
 
     def stop(self) -> None:
         rec = self._recognition

@@ -107,7 +107,7 @@ docker compose logs -f
 | `LLM_TEMPERATURE` | `0.7` | 采样温度 |
 | `MAX_SENTENCE_SILENCE` | `800` | STT 句尾静音毫秒，越小越快判定说完（200–6000） |
 | `ENABLE_BARGE_IN` | `true` | 是否允许打断 |
-| `VAD_SENSITIVITY` | `50` | 前端语音门控灵敏度 0-100，越大越易触发（背景噪声多则调低） |
+| `VAD_SENSITIVITY` | `70` | 前端语音门控灵敏度 0-100，越大越易触发（背景噪声多则调低） |
 | `ENABLE_ECHO_DETECT` | `true` | 回声检测总开关（外放自循环防护） |
 | `ECHO_SIMILARITY_THRESHOLD` | `0.6` | 回声相似度阈值 0-1，越低越激进判回声 |
 | `ECHO_HANGOVER_MS` | `1200` | speaking 结束后仍检测的窗口(毫秒) |
@@ -122,6 +122,11 @@ docker compose logs -f
 | `ENABLE_END_BY_VOICE` | `true` | 是否启用「语义结束」（说再见等由 LLM 调 `end_conversation` 结束） |
 | `ENABLE_MCP` | `true` | 是否启用 MCP（外部工具服务器） |
 | `MCP_CONFIG_FILE` | `mcp.json` | MCP 配置文件路径（mcpServers 格式） |
+| `ENABLE_LATENCY_METRIC` | `true` | 每轮首包下发端到端延迟埋点（total/tts_first/llm_ttft ms） |
+| `ENABLE_COMMA_SPLIT` | `true` | 句子切分含逗号/冒号，更早喂 TTS（false 退回仅句末标点） |
+| `SENTENCE_SPLIT_MAX_LEN` | `12` | 无标点时累积到此字数也强制喂 TTS（0=禁用） |
+| `ENABLE_VAD_TURN_END` | `true` | 前端 VAD `speech_end` 提前触发回合结束（替代等 STT final 800ms） |
+| `ENABLE_LOCAL_BARGE_IN` | `true` | 前端 VAD 即时本地打断 + 上行 cancel（false 回退纯服务端） |
 | `HOST` / `PORT` | `127.0.0.1` / `8000` | 服务监听 |
 
 ### 运行时开关（前端）
@@ -146,6 +151,19 @@ docker compose logs -f
 
 - `ENABLE_ECHO_DETECT=false` 可关闭；`ECHO_SIMILARITY_THRESHOLD` 调相似度松紧；`ECHO_HANGOVER_MS` 调说完后的检测窗口。
 - **能力边界**：文本级方案，对 ASR 把回声严重错识成无关文字的极端情况会漏判（概率低，且有浏览器 AEC + 前端 VAD 前置挡一部分）。**根治回声的最优解是戴耳机**（扬声器声音物理上进不了麦克风）。
+
+### 低延迟优化（端到端首响）
+
+「用户说完 → 听到助手第一个字」的端到端延迟，参考 [HuggingFace speech-to-speech](https://github.com/huggingface/speech-to-speech) 做了如下优化（每项独立 `.env` 开关，可回滚）：
+
+- **延迟埋点**（`ENABLE_LATENCY_METRIC`）：每轮首包下发 `{total_ms, tts_first_ms, llm_ttft_ms}`，浏览器控制台与状态栏显示，用于量化每次调整的收益。
+- **句子切分细化**（`ENABLE_COMMA_SPLIT` / `SENTENCE_SPLIT_MAX_LEN`）：LLM 输出按逗号/冒号等子句（或攒够定长）即喂 TTS，不必等整句句号，让 TTS 首包在时间轴提前。
+- **VAD 驱动 turn-end**（`ENABLE_VAD_TURN_END`）：复用前端 Silero VAD 的 `onSpeechEnd`，用户停说后 ~150-250ms 即触发回合结束并开始响应，**不再干等 STT 句末静音 final（~800ms）**——这是首响路径最大的一刀。后端用缓存的最新 STT `partial` 作为用户输入；STT final 作为兜底（裸 WS / 丢包时仍可用），二者先到先触发、后到丢弃，避免重复。
+- **本地 barge-in**（`ENABLE_LOCAL_BARGE_IN`）：助手播报时用户一开口，前端 VAD 即刻停播并上行 `cancel`，不必等服务端 `cancel_playback` 回路（借鉴 s2s 由 VAD 帧级事件驱动打断）。
+
+> **关于回声**：本地 barge-in 与 VAD turn-end 在外放时可能把 TTS 回声误判为用户开口（浏览器 AEC 对外放效果有限）。后端文本级回声检测仍兜底（回声 final 被丢弃、**不会自循环**，至多提前停播一次）。**根治仍是戴耳机**。
+>
+> 调参建议：延迟仍偏高可调小 `MAX_SENTENCE_SILENCE`（如 500）、上调 `VAD_SENSITIVITY`；误打断多则下调 `VAD_SENSITIVITY`。
 
 ### 关于 TTS 模型（重要）
 

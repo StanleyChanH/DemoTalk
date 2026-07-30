@@ -67,8 +67,8 @@ STT_LANGUAGE_HINTS: list[str] = ["zh", "en"]
 # ---- 行为 ----
 ENABLE_BARGE_IN: bool = _bool("ENABLE_BARGE_IN", True)
 
-# ---- VAD（前端语音门控灵敏度，0-100，越大越灵敏；50=中等）----
-VAD_SENSITIVITY: int = _int("VAD_SENSITIVITY", 50)
+# ---- VAD（前端语音门控灵敏度，0-100，越大越灵敏；默认 70 偏灵敏，缩短开口确认延迟）----
+VAD_SENSITIVITY: int = _int("VAD_SENSITIVITY", 70)
 
 # ---- 回声检测（外放自循环防护；后端文本级，比对 STT final 与最近 TTS 文本）----
 ENABLE_ECHO_DETECT: bool = _bool("ENABLE_ECHO_DETECT", True)
@@ -102,3 +102,15 @@ ENABLE_END_BY_VOICE: bool = _bool("ENABLE_END_BY_VOICE", True)
 # ---- MCP ----
 ENABLE_MCP: bool = _bool("ENABLE_MCP", True)
 MCP_CONFIG_FILE: str = _get("MCP_CONFIG_FILE", "mcp.json")
+
+# ---- 低延迟优化（参考 speech-to-speech；每项独立开关，可回滚）----
+# 端到端延迟埋点：每轮首包下发 {total_ms, tts_first_ms, llm_ttft_ms} 到前端，量化每次改动收益
+ENABLE_LATENCY_METRIC: bool = _bool("ENABLE_LATENCY_METRIC", True)
+# 句子切分细化：LLM 输出按逗号/冒号等子句切分喂 TTS，更早出首包（false 退回仅句末标点）
+ENABLE_COMMA_SPLIT: bool = _bool("ENABLE_COMMA_SPLIT", True)
+# 句子切分长度兜底：无标点命中时累积到此字数也强制 flush 一段（0=禁用）
+SENTENCE_SPLIT_MAX_LEN: int = _int("SENTENCE_SPLIT_MAX_LEN", 12)
+# 前端 VAD 驱动 turn-end：用 onSpeechEnd 提前触发（替代等 STT 句末 final 800ms），首响路径最大优化
+ENABLE_VAD_TURN_END: bool = _bool("ENABLE_VAD_TURN_END", True)
+# 前端本地 barge-in：speaking 期 VAD 检测到开口即本地停播 + 上行 cancel（false 回退纯服务端）
+ENABLE_LOCAL_BARGE_IN: bool = _bool("ENABLE_LOCAL_BARGE_IN", True)

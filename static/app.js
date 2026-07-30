@@ -25,6 +25,7 @@ let micStream = null;
 let workletNode = null;
 let playCtx = null;
 let ttsSampleRate = 24000; // 由后端 tts_format 消息告知
+let curState = "idle"; // 当前会话状态（由后端 state 消息同步），供 VAD 回调判断 barge-in / speech_end
 
 // ---- 视觉（摄像头预览 / 闪光 / 拍照参数）----
 const videoEl = $("#camView");
@@ -47,7 +48,7 @@ let endingByVoice = false;
 // ---- 功能开关（中断 / MCP / 语义结束）----
 const FLAG_KEYS = ["barge_in", "mcp", "end_by_voice", "idle_timeout"];
 const LS_KEY = "demotalk.flags";
-let flags = { barge_in: true, mcp: true, end_by_voice: true, idle_timeout: true, vad_sensitivity: 50 };
+let flags = { barge_in: true, mcp: true, end_by_voice: true, idle_timeout: true, local_barge_in: true, vad_sensitivity: 50 };
 let mcpAvailable = true;
 
 function loadFlags() {
@@ -150,6 +151,7 @@ function setConn(state) {
   connPill.className = "pill " + (state ? "pill-live" : "pill-off");
 }
 function setState(state) {
+  curState = state || "idle";
   statePill.textContent = STATE_TEXT[state] || state;
   statePill.className = "pill " + (state || "");
 }
@@ -351,6 +353,7 @@ async function createVad(stream) {
     // 会被解析到 CDN 域（cdn.jsdelivr.net/static/vad/...）而 404。绝对 URL 不受基址影响。
     onnxWASMBasePath: location.origin + "/static/vad/",
     ...initOpts,
+    redemptionFrames: 5, // end-of-speech 静音帧（默认 8≈256ms → 5≈160ms），让 speech_end 更早触发
     onSpeechStart: () => {
       // 进入候选：重置缓冲，开始积累（由 onFrameProcessed 的 else 分支）
       vadPreRoll = [];
@@ -362,6 +365,14 @@ async function createVad(stream) {
       for (const f of vadPreRoll) sendVadFrame(f);
       vadPreRoll = [];
       setVadIndicator(true);
+      // 本地 barge-in：助手播报中检测到开口，立即停播 + 上行 cancel，不等服务端回路。
+      // 借鉴 speech-to-speech 由 VAD 帧级事件驱动打断（而非等 STT 句末 final）。
+      // 注：外放回声也可能触发（浏览器 AEC 对外放效果有限），后端 _is_echo 兜底防自循环；戴耳机根治。
+      if (flags.local_barge_in && curState === "speaking") {
+        stopPlayback();
+        flushTypewriter();
+        try { ws.send(JSON.stringify({ type: "cancel" })); } catch (e) {}
+      }
     },
     onFrameProcessed: (_probs, frame) => {
       if (vadSending) {
@@ -375,6 +386,11 @@ async function createVad(stream) {
     onSpeechEnd: () => {
       vadSending = false;
       setVadIndicator(false);
+      // VAD 驱动 turn-end：仅在聆听中发 speech_end，让后端用最新 partial 提前结束回合
+      // （替代等 STT 句末 final ~800ms）。播报中不发（避免回声误触；播报中开口走本地 barge-in）。
+      if (curState === "listening" && ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(JSON.stringify({ type: "speech_end" })); } catch (e) {}
+      }
     },
     onVADMisfire: () => {
       // 短于 minSpeechMs 的段：丢弃缓冲，不上传
@@ -415,6 +431,8 @@ function applyDefaults(defaults) {
   // vad_sensitivity：localStorage > .env 默认
   if (typeof saved.vad_sensitivity === "number") flags.vad_sensitivity = saved.vad_sensitivity;
   else if (typeof defaults.vad_sensitivity === "number") flags.vad_sensitivity = defaults.vad_sensitivity;
+  // local_barge_in：以后端下发默认为准（.env ENABLE_LOCAL_BARGE_IN）
+  if (typeof defaults.local_barge_in === "boolean") flags.local_barge_in = defaults.local_barge_in;
   renderToggles();
   renderVadSlider();
   applyVadSensitivity();
@@ -463,6 +481,11 @@ function handleEvent(obj) {
       break;
     case "tts_end":
       flushTypewriter();
+      break;
+    case "latency_metric":
+      // 端到端延迟埋点：total_ms = 用户说完 → 听到助手首字
+      console.log("[延迟] 首响 " + obj.total_ms + " ms（LLM TTFT " + obj.llm_ttft_ms + " ms，TTS 首包 " + obj.tts_first_ms + " ms）");
+      setHint("首响 " + Math.round(obj.total_ms) + " ms");
       break;
     case "cancel_playback":
       stopPlayback();
