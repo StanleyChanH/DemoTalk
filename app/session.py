@@ -28,8 +28,16 @@ from .tools.builtin.end_conversation import EndConversationTool
 
 log = logging.getLogger("demotalk.session")
 
-# 句子结束符：中英文标点 + 换行。用于把 LLM 增量切成可立即合成的小段
-_SENTENCE_END = re.compile(r"[。！？!?；;\n]")
+# 句子切分：把 LLM 增量切成可立即喂 TTS 的小段。
+# _STRICT 仅句末标点（保守，韵序最自然）；_FULL 额外含逗号/顿号/冒号（子句级，更早出首包）。
+# 由 config.ENABLE_COMMA_SPLIT 运行时选择。
+_SENTENCE_END_STRICT = re.compile(r"[。！？!?；;\n]")
+_SENTENCE_END_FULL = re.compile(r"[。！？!?；;\n、，,：:]")
+
+
+def _sentence_end_re() -> re.Pattern[str]:
+    """根据 ENABLE_COMMA_SPLIT 选择切句正则。"""
+    return _SENTENCE_END_FULL if config.ENABLE_COMMA_SPLIT else _SENTENCE_END_STRICT
 
 # 回声检测：文本归一化（去标点/空格/符号，转小写；保留中文与字母数字）
 _ECHO_STRIP = re.compile(r"\W+", re.UNICODE)
@@ -93,6 +101,13 @@ class Session:
         self._last_activity: float = 0.0
         self._idle_task: asyncio.Task | None = None
 
+        # 低延迟：turn-end 去重（前端 VAD speech_end 与 STT final 先到先触发，后到丢弃）
+        self._endpoint_done: bool = False
+        # 延迟埋点：本轮起算时刻、LLM 首字时刻、是否已发首包指标
+        self._t_turn_start: float = 0.0
+        self._t_llm_first: float | None = None
+        self._tts_metric_sent: bool = False
+
     # ---------- 生命周期 ----------
 
     async def start(self) -> None:
@@ -123,6 +138,7 @@ class Session:
                 "mcp_available": mcp_manager.has_tools(),
                 "vad_sensitivity": config.VAD_SENSITIVITY,
                 "idle_timeout": config.ENABLE_IDLE_TIMEOUT,
+                "local_barge_in": config.ENABLE_LOCAL_BARGE_IN,
             }
         )
         await self._set_state("listening")
@@ -185,6 +201,9 @@ class Session:
         t = msg.get("type")
         if t == "cancel":
             await self._barge_in()
+        elif t == "speech_end":
+            # 前端 VAD 检测到用户说完：用 partial 提前结束回合（不等 STT final）
+            await self._on_speech_end()
         # stop 由 WS 层处理（断开）
 
     async def set_flags(self, msg: dict) -> None:
@@ -242,6 +261,12 @@ class Session:
             log.info("回声检测：丢弃疑似回声输入「%s」", text)
             return
 
+        # turn-end 去重：若前端 VAD speech_end 已用 partial 提前开过本轮，
+        # 此处 STT final 是同源延迟副本（约晚 800ms），丢弃以避免重复开轮 / 自我打断。
+        if self._endpoint_done:
+            log.debug("turn-end 去重：丢弃延迟到达的 STT final「%s」", text)
+            return
+
         # 真实用户输入：刷新空闲计时（回声不刷新）
         self._last_activity = time.monotonic()
         await self._send({"type": "user_final", "text": text})
@@ -253,9 +278,49 @@ class Session:
                 # 不打断：忽略说话期间的输入
                 return
 
+        self._begin_turn(text)
+
+    def _begin_turn(self, text: str) -> None:
+        """开新一轮的公共前置：标记 endpoint、记起算时刻、自增 turn、调度 _run_turn。
+
+        speech_end（partial）与 STT final 两条触发路径共用；先到者置 _endpoint_done=True，
+        后到者见 True 即丢弃（见 _on_final / _on_speech_end 的去重闸门）。
+        """
+        self._endpoint_done = True
+        self._t_turn_start = time.monotonic()
+        self._t_llm_first = None
+        self._tts_metric_sent = False
         self._current_turn += 1
         turn = self._current_turn
         self._turn_task = asyncio.create_task(self._run_turn(text, turn))
+
+    async def _on_speech_end(self) -> None:
+        """前端 VAD 检测到用户说完（speech_end 信号）→ 用缓存 partial 提前结束回合。
+
+        借鉴 speech-to-speech 的 VAD 驱动 turn-taking：把回合结束判定从 STT 语义层
+        （fun-asr 句末静音 ~800ms）上移到前端 VAD 声学层（~150-250ms），大幅缩短首响。
+        """
+        if not self._running:
+            return
+        if not config.ENABLE_VAD_TURN_END:
+            return  # 关闭：完全回退纯 STT final 路径
+        if self._ending:
+            return
+        if self.state != "listening":
+            # thinking/speaking 期不处理：避免回声误触 / 干扰进行中的轮
+            return
+        if self._endpoint_done:
+            return  # 本轮已 endpoint（final 先到了）
+        text = (self.stt.last_partial or "").strip()
+        if not text:
+            return  # 暂无 partial：等 STT final 兜底
+        if self._is_echo(text):
+            log.info("回声检测（speech_end）：丢弃疑似回声「%s」", text)
+            return
+        log.info("VAD turn-end：用 partial 提前触发「%s」（不等 STT final）", text)
+        self._last_activity = time.monotonic()
+        await self._send({"type": "user_final", "text": text})
+        self._begin_turn(text)
 
     # ---------- 一轮对话 ----------
 
@@ -288,15 +353,24 @@ class Session:
                         return
                     if event["type"] == "text":
                         delta = event["text"]
+                        # 延迟埋点：首个文本 token 时刻（LLM TTFT）
+                        if self._t_llm_first is None:
+                            self._t_llm_first = time.monotonic()
                         await self._send({"type": "delta", "text": delta})
                         buffer += delta
+                        end_re = _sentence_end_re()
                         while True:
-                            m = _SENTENCE_END.search(buffer)
-                            if not m:
+                            m = end_re.search(buffer)
+                            if m:
+                                sentence = buffer[: m.end()]
+                                buffer = buffer[m.end():]
+                            elif config.SENTENCE_SPLIT_MAX_LEN > 0 and len(buffer) >= config.SENTENCE_SPLIT_MAX_LEN:
+                                # 无标点但已攒够长度：强制 flush 一段（长度兜底，抢首包）
+                                sentence = buffer
+                                buffer = ""
+                            else:
                                 break
-                            sentence = buffer[: m.end()]
-                            buffer = buffer[m.end():]
-                            if active():
+                            if active() and sentence.strip():
                                 tts.feed(sentence)
                                 self._echo_ref.append(sentence)
                                 fed_any = True
@@ -481,6 +555,18 @@ class Session:
         # 仅接收当前轮的音频（barge-in 后旧实例的音频丢弃）
         if source is not self.tts or not self._running:
             return
+        # 延迟埋点：首个音频包 = 端到端首响时刻（仅本轮发一次）
+        if config.ENABLE_LATENCY_METRIC and not self._tts_metric_sent:
+            self._tts_metric_sent = True
+            now = time.monotonic()
+            total_ms = (now - self._t_turn_start) * 1000.0
+            llm_ttft_ms = (self._t_llm_first - self._t_turn_start) * 1000.0 if self._t_llm_first else None
+            await self._send({
+                "type": "latency_metric",
+                "total_ms": round(total_ms, 1),
+                "tts_first_ms": round(total_ms, 1),
+                "llm_ttft_ms": None if llm_ttft_ms is None else round(llm_ttft_ms, 1),
+            })
         try:
             await self.ws.send_bytes(data)
         except Exception:
@@ -514,6 +600,9 @@ class Session:
         if self.state == "speaking" and state != "speaking":
             # 离开 speaking：记录时刻，供回声检测 hangover 窗口使用
             self._speaking_ended_at = time.monotonic()
+        if state == "listening":
+            # 回到 listening：重置 turn-end 去重标志，准备接收下一轮 speech_end / final
+            self._endpoint_done = False
         self.state = state
         await self._send({"type": "state", "state": state})
 
