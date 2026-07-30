@@ -265,8 +265,11 @@ function stopPlayback() {
 
 // ---- WebSocket ----
 function connect() {
+  // 前端直连后端 WS：优先用注入的 DEMOTALK_WS_URL（前端容器按 DEMOTALK_BACKEND_URL 生成 config.js）；
+  // 未注入则回退同源 /ws（兼容本地同源调试）。
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/ws`);
+  const wsUrl = window.DEMOTALK_WS_URL || `${proto}://${location.host}/ws`;
+  ws = new WebSocket(wsUrl);
   ws.binaryType = "arraybuffer";
 
   ws.onopen = () => {

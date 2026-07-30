@@ -15,9 +15,9 @@ build/
 .uv-cache/
 
 # 测试产物
-scripts/test_speech.wav
-scripts/test_vision_speech.wav
-scripts/test_mcp_speech.wav
+backend/scripts/test_speech.wav
+backend/scripts/test_vision_speech.wav
+backend/scripts/test_mcp_speech.wav
 
 # IDE / OS
 .vscode/

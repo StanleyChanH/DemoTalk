@@ -5,7 +5,8 @@ import os
 
 from dotenv import load_dotenv
 
-# 从项目根目录加载 .env（uv run 时工作目录为项目根）
+# 加载 .env：find_dotenv 从本文件向上查找，命中仓库根的 .env（本地 uv run）；
+# Docker 下由 docker compose 的 env_file 注入环境变量（容器内无 .env 文件）。
 load_dotenv()
 
 
